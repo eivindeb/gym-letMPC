@@ -1,0 +1,273 @@
+{
+  "environment": {
+    "max_steps": 100,
+    "observation": {
+      "variables": [
+        {
+          "name": "x1",
+          "type": "error",
+          "transform": ["absolute", "square"]
+        },
+        {
+          "name": "x1",
+          "type": "epsilon",
+          "transform": ["absolute", "square"]
+        },
+        {
+          "name": "x2",
+          "type": "epsilon",
+          "transform": ["absolute", "square"]
+        },
+        {
+          "name": "c-x1-u",
+          "type": "constraint",
+          "value_type": "distance"
+        },
+        {
+          "name": "c-x1-l",
+          "type": "constraint",
+          "value_type": "distance"
+        },
+        {
+          "name": "mpc_compute_time",
+          "type": "time",
+          "value_type": "fraction"
+        }
+      ]
+    },
+    "action": {
+      "variables": [
+        {
+          "name": "mpc_compute"
+        }
+      ]
+    },
+    "reward": {
+      "variables": [
+        {
+          "type": "state",
+          "name": "x1"
+        },
+        {
+          "type": "reference",
+          "name": "x1_r"
+        },
+        {
+          "type": "input",
+          "name": "u1",
+          "value_type": "delta"
+        },
+        {
+          "type": "constraint",
+          "name": "c-x1-u",
+          "value_type": "distance"
+        },
+        {
+          "type": "constraint",
+          "name": "c-x1-l",
+          "value_type": "distance"
+        },
+        {
+          "type": "action",
+          "name": "mpc_compute",
+          "value_type": "controller"
+        }
+      ],
+      "expression": "10*(x1_r-x1)**2 + 1 * (u1) ** 2 + 25 * max(0, c-x1-u) + 25 * max(0, c-x1-l) + 0.5 * mpc_compute"
+    },
+    "randomize": {
+      "reference": {
+        "x1_r": {
+          "type": "uniform",
+          "kw": {
+            "low": -0.5,
+            "high": 0.5
+          }
+        }
+      },
+      "state": {
+        "x1": {
+          "type": "uniform",
+          "kw": {
+            "low": -1,
+            "high": 1
+          }
+        },
+        "x2": {
+          "type": "uniform",
+          "kw": {
+            "low": -0.1,
+            "high": 0.1
+          }
+        }
+      },
+      "constraints": {
+        "c-x1-u": {
+          "type": "uniform",
+          "kw": {
+            "low": -0.6,
+            "high": 1.3
+          }
+        },
+        "c-x1-l": {
+          "type": "uniform",
+          "kw": {
+            "low": -1.3,
+            "high": 0.6
+          }
+        }
+      },
+      "model": {
+        "apply": [
+          "plant"
+        ],
+        "states": {
+          "x1": {
+            "a": {
+              "x2": {
+                "type": "uniform",
+                "kw": {
+                  "low": 0.8,
+                  "high": 1.2
+                }
+              }
+            }
+          },
+          "x2": {
+            "b": {
+              "u1": {
+                "type": "uniform",
+                "kw": {
+                  "low": 0.15,
+                  "high": 0.3
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "render": {
+      "plot_action": true,
+      "plot_reward": true
+    },
+    "info": {
+      "reward": {
+        "base": "10*(x1_r-x1)**2 + 1 * (u1) ** 2",
+        "constraint": "25 * max(0, c-x1-u) + 25 * max(0, c-x1-l)",
+        "computation": "0.5 * mpc_compute"
+      }
+    }
+  },
+  "plant": {
+    "render": {
+      "process_noise": true
+    },
+    "params": {
+      "t_step": 0.1
+    },
+    "model": {
+      "type": "continuous",
+      "class": "linear",
+      "states": {
+        "x1": {
+          "a": {"x2": 1},
+          "b": {"u1": 0}
+        },
+        "x2": {
+          "a": {"x1": 0},
+          "b": {"u1": 0.25},
+          "W": {
+            "type": "impulse",
+            "probability": 0.05,
+            "value": 3
+          }
+        }
+      },
+      "inputs": {
+        "u1": {
+          "unit": "rad/s"
+        }
+      }
+    }
+  },
+  "mpc": {
+    "params": {
+      "n_horizon": 40,
+      "t_step": 0.1,
+      "n_robust": 0,
+      "store_full_solution": true
+    },
+    "model": "plant",
+    "reference": {
+      "x1_r": {
+        "type": "_x",
+        "value": 0.3
+      }
+    },
+    "constraints": [
+      {
+        "var_name": "x1",
+        "var_type": "_x",
+        "constraint_type": "lower",
+        "value": 0.2
+      },
+      {
+        "var_name": "x1",
+        "var_type": "_x",
+        "constraint_type": "upper",
+        "value": 0.7
+      },
+      {
+        "var_name": "u1",
+        "var_type": "_u",
+        "constraint_type": "lower",
+        "value": -3
+      },
+      {
+        "var_name": "u1",
+        "var_type": "_u",
+        "constraint_type": "upper",
+        "value": 3
+      }
+    ],
+    "objective": {
+      "lterm": {
+        "variables": [
+          {
+            "name": "x1",
+            "type": "_x"
+          },
+          {
+            "name": "x1_r",
+            "type": "_r"
+          }
+        ],
+        "expression": "(x1_r - x1)**2"
+      },
+      "mterm": {
+        "variables": [
+          {
+            "name": "x1",
+            "type": "_x"
+          },
+          {
+            "name": "x1_r",
+            "type": "_r"
+          }
+        ],
+        "expression": "(x1_r - x1)**2"
+      },
+      "R_delta": {
+        "u1": 1e-2
+      }
+    }
+  },
+  "lqr": {
+      "model": "mpc",
+      "objective": {
+        "Q": [[1, 0], [0, 1]],
+        "R": [0.05]
+      }
+    }
+}

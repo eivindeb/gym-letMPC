@@ -1,0 +1,283 @@
+{
+  "environment": {
+    "max_steps": 100,
+    "observation": {
+      "variables": [
+        {
+          "name": "pos",
+          "type": "state",
+          "transform": ["absolute", "square"]
+        },
+        {
+          "name": "pos",
+          "type": "epsilon",
+          "transform": ["absolute", "square"]
+        },
+        {
+          "name": "v",
+          "type": "state",
+          "transform": ["absolute", "square"]
+        },
+        {
+          "name": "v",
+          "type": "epsilon",
+          "transform": ["absolute", "square"]
+        },
+        {
+          "name": "theta",
+          "type": "state",
+          "transform": ["absolute", "square"]
+        },
+        {
+          "name": "theta",
+          "type": "error",
+          "transform": ["absolute", "square"]
+        },
+        {
+          "name": "theta",
+          "type": "epsilon",
+          "transform": ["absolute", "square"]
+        },
+        {
+          "name": "omega",
+          "type": "state",
+          "transform": ["absolute", "square"]
+        },
+        {
+          "name": "omega",
+          "type": "epsilon",
+          "transform": ["absolute", "square"]
+        },
+        {
+          "name": "mpc_compute_time",
+          "type": "time",
+          "value_type": "fraction"
+        }
+      ]
+    },
+    "action": {
+      "variables": [
+        {
+          "name": "mpc_compute"
+        }
+      ]
+    },
+    "reward": {
+      "variables": [
+        {
+          "type": "state",
+          "name": "theta"
+        },
+        {
+          "type": "reference",
+          "name": "theta_r"
+        },
+        {
+          "type": "input",
+          "name": "u1",
+          "value_type": "delta"
+        },
+        {
+          "type": "action",
+          "name": "mpc_compute",
+          "value_type": "controller"
+        }
+      ],
+      "expression": "10*(theta_r-theta)**2 + 1 * (u1) ** 2 + 0.5 * mpc_compute"
+    },
+    "randomize": {
+      "reference": {
+        "theta_r": {
+          "type": "uniform",
+          "kw": {
+            "low": -0.3,
+            "high": 0.3
+          }
+        }
+      },
+      "state": {
+        "pos": {
+          "type": "uniform",
+          "kw": {
+            "low": -0.5,
+            "high": 0.5
+          }
+        },
+        "v": {
+          "type": "uniform",
+          "kw": {
+            "low": -1,
+            "high": 1
+          }
+        },
+        "theta": {
+          "type": "uniform",
+          "kw": {
+            "low": -1,
+            "high": 1
+          }
+        },
+        "omega": {
+          "type": "uniform",
+          "kw": {
+            "low": -1,
+            "high": 1
+          }
+        }
+      },
+      "model": {}
+    },
+    "render": {
+      "plot_action": true,
+      "plot_reward": true
+    },
+    "info": {
+      "reward": {
+        "base": "10*(theta_r-theta)**2 + 1 * (u1) ** 2",
+        "computation": "0.5 * mpc_compute"
+      }
+    }
+  },
+  "plant": {
+    "render": {
+      "process_noise": true
+    },
+    "params": {
+      "t_step": 0.1
+    },
+    "model": {
+      "type": "continuous",
+      "class": "nonlinear",
+      "states": {
+        "pos": {
+          "rhs": "v"
+        },
+        "v": {
+          "rhs": "(m * g * np.sin(theta) * np.cos(theta) - (1+k) * (u1 + m * l * (omega) ** 2 * np.sin(theta))) / (m * (np.cos(theta)) ** 2 - (1 + k) * M)"
+        },
+        "theta": {
+          "rhs": "omega"
+        },
+        "omega": {
+          "rhs": "(M * g * np.sin(theta) - np.cos(theta) * (u1 + m * l * (omega) ** 2 * np.sin(theta))) / ((1 + k) * M * l - m * l * (np.cos(theta)) ** 2)"
+        }
+      },
+      "inputs": {
+        "u1": {
+          "unit": "rad/s"
+        }
+      },
+      "parameters": {
+        "m": 1,
+        "M": 1.1,
+        "l": 1,
+        "g": 9.81,
+        "k": 1
+      }
+    }
+  },
+  "mpc": {
+    "params": {
+      "n_horizon": 20,
+      "t_step": 0.1,
+      "n_robust": 0,
+      "store_full_solution": true
+    },
+    "model": "plant",
+    "reference": {
+      "theta_r": {
+        "type": "_x",
+        "value": 0
+      }
+    },
+    "constraints": [
+      {
+        "var_name": "u1",
+        "var_type": "_u",
+        "constraint_type": "lower",
+        "value": -50
+      },
+      {
+        "var_name": "u1",
+        "var_type": "_u",
+        "constraint_type": "upper",
+        "value": 50
+      }
+    ],
+    "objective": {
+      "lterm": {
+        "variables": [
+          {
+            "name": "theta",
+            "type": "_x"
+          },
+          {
+            "name": "theta_r",
+            "type": "_r"
+          }
+        ],
+        "expression": "(theta_r - theta)**2"
+      },
+      "mterm": {
+        "variables": [
+          {
+            "name": "theta",
+            "type": "_x"
+          },
+          {
+            "name": "theta_r",
+            "type": "_r"
+          },
+          {
+            "name": "pos",
+            "type": "_x"
+          }
+        ],
+        "expression": "(theta_r - theta)**2"
+      },
+      "R_delta": {
+        "u1": 1e-2
+      }
+    }
+  },
+  "lqr": {
+      "model": {
+        "class": "linearization",
+        "states": {
+          "pos": {
+            "a": {"v": 1}
+          },
+          "v": {
+            "a": {"theta": "2*(g*m*np.cos(theta)*np.sin(theta) - (l*m*(omega)**2*np.sin(theta) + u1)*(k + 1))*m*np.cos(theta)*np.sin(theta)/(m*(np.cos(theta))**2 - M*(k + 1))**2 - ((k + 1)*l*m*(omega)**2*np.cos(theta) - g*m*(np.cos(theta))**2 + g*m*(np.sin(theta))**2)/(m*(np.cos(theta))**2 - M*(k + 1))",
+                  "omega": "-(2 * (k + 1) * l * m * omega*np.sin(theta)) / (m*(np.cos(theta))**2-M*(k+1))"},
+            "b": {"u1":  "-(k+1) / (m*(np.cos(theta))**2-M*(k+1))"}
+          },
+          "theta": {
+            "a": {"omega": 1}
+          },
+          "omega": {
+            "a": {"theta": "-2*(M*g*np.sin(theta) - (l*m*(omega)**2*np.sin(theta) + u1)*np.cos(theta))*l*m*np.cos(theta)*np.sin(theta)/(l*m*(np.cos(theta))**2 - M*(k + 1)*l)**2 + (l*m*(omega)**2*(np.cos(theta))**2 - M*g*np.cos(theta) - (l*m*(omega)**2*np.sin(theta) + u1)*np.sin(theta))/(l*m*(np.cos(theta))**2 - M*(k + 1)*l)",
+                  "omega": "2*l*m*omega*np.cos(theta)*np.sin(theta)/(l*m*(np.cos(theta))**2 - M*(k + 1)*l)"},
+            "b": {"u1": "np.cos(theta)/(l*m*(np.cos(theta))**2 - M*(k + 1)*l)"}
+          }
+        },
+        "inputs": {
+          "u1": {
+            "unit": "rad/s"
+          }
+        },
+        "parameters": {
+          "m": 1,
+          "mp": 0.1,
+          "M": 1.1,
+          "l": 1,
+          "g": 9.81,
+          "k": 1
+        }
+      },
+      "objective": {
+        "Q": [[0, 0, 0, 0], [0, 0.05, 0, 0], [0, 0, 1, 0], [0, 0, 0, 0]],
+        "R": [1]
+      }
+    }
+}

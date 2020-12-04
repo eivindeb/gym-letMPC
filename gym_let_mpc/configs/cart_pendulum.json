@@ -1,0 +1,250 @@
+{
+  "environment": {
+    "max_steps": 100,
+    "observation": {
+      "variables": [
+        {
+          "name": "theta",
+          "type": "state",
+          "limits": [-3.14, 3.14],
+          "transform": ["none", "square"]
+        },
+        {
+          "name": "theta",
+          "type": "epsilon",
+          "limits": [-1, 1],
+          "transform": ["none", "square"]
+        },
+        {
+          "name": "omega",
+          "type": "state",
+          "limits": [-10, 10],
+          "transform": ["none", "square"]
+        },
+        {
+          "name": "omega",
+          "type": "epsilon",
+          "limits": [-5, 5],
+          "transform": ["none", "square"]
+        },
+        {
+          "name": "mpc_compute_time",
+          "type": "time",
+          "value_type": "fraction",
+          "limits": [0, 1]
+        }
+      ]
+    },
+    "action": {
+      "variables": [
+        {
+          "name": "mpc_compute"
+        }
+      ]
+    },
+    "reward": {
+      "variables": [
+        {
+          "type": "state",
+          "name": "theta"
+        },
+        {
+          "type": "reference",
+          "name": "theta_r"
+        },
+        {
+          "type": "input",
+          "name": "u1",
+          "value_type": "delta"
+        },
+        {
+          "type": "action",
+          "name": "mpc_compute",
+          "value_type": "controller"
+        }
+      ],
+      "expression": "-1 * (theta_r - theta)**2 - 0.0001 * mpc_compute"
+    },
+    "randomize": {
+      "reference": {},
+      "state": {
+        "pos": {
+          "type": "uniform",
+          "kw": {
+            "low": -0.5,
+            "high": 0.5
+          }
+        },
+        "v": {
+          "type": "uniform",
+          "kw": {
+            "low": -1,
+            "high": 1
+          }
+        },
+        "theta": {
+          "type": "uniform",
+          "kw": {
+            "low": -0.78,
+            "high": 0.78
+          }
+        },
+        "omega": {
+          "type": "uniform",
+          "kw": {
+            "low": -1,
+            "high": 1
+          }
+        }
+      },
+      "model": {}
+    },
+    "render": {
+      "plot_action": true,
+      "plot_reward": true
+    },
+    "info": {
+      "reward": {
+        "base": "(theta_r - theta)**2",
+        "computation": "0.0001 * mpc_compute"
+      }
+    }
+  },
+  "plant": {
+    "render": {
+      "process_noise": true
+    },
+    "params": {
+      "t_step": 0.1
+    },
+    "model": {
+      "type": "continuous",
+      "class": "nonlinear",
+      "states": {
+        "pos": {
+          "rhs": "v"
+        },
+        "v": {
+          "rhs": "(m * g * np.sin(theta) * np.cos(theta) - (1+k) * (u1 + m * l * (omega) ** 2 * np.sin(theta))) / (m * (np.cos(theta)) ** 2 - (1 + k) * M)"
+        },
+        "theta": {
+          "rhs": "omega"
+        },
+        "omega": {
+          "rhs": "(M * g * np.sin(theta) - np.cos(theta) * (u1 + m * l * (omega) ** 2 * np.sin(theta))) / ((1 + k) * M * l - m * l * np.cos(theta) ** 2)",
+          "W": {
+            "type": "normal",
+            "kw": {
+              "loc": 0,
+              "scale": 1
+            },
+            "scale": 1
+          }
+        }
+      },
+      "inputs": {
+        "u1": {
+          "unit": "rad/s"
+        }
+      },
+      "parameters": {
+        "m": 0.1,
+        "M": 1.1,
+        "l": 1,
+        "g": 9.81,
+        "k": 0.33
+      }
+    }
+  },
+  "mpc": {
+    "params": {
+      "n_horizon": 20,
+      "t_step": 0.1,
+      "n_robust": 0,
+      "store_full_solution": true
+    },
+    "model": "plant",
+    "reference": {
+      "theta_r": {
+        "type": "_x",
+        "value": 0
+      }
+    },
+    "constraints": [
+      {
+        "var_name": "u1",
+        "var_type": "_u",
+        "constraint_type": "lower",
+        "value": -25
+      },
+      {
+        "var_name": "u1",
+        "var_type": "_u",
+        "constraint_type": "upper",
+        "value": 25
+      }
+    ],
+    "objective": {
+      "lterm": {
+        "variables": [
+          {
+            "name": "theta",
+            "type": "_x"
+          },
+          {
+            "name": "theta_r",
+            "type": "_r"
+          }
+        ],
+        "expression": "10 * (theta_r - theta)**2"
+      },
+      "mterm": {
+        "variables": [
+          {
+            "name": "theta",
+            "type": "_x"
+          },
+          {
+            "name": "theta_r",
+            "type": "_r"
+          }
+        ],
+        "expression": "10 * (theta_r - theta)**2"
+      },
+      "R_delta": {
+        "u1": 1e-4
+      }
+    }
+  },
+  "lqr": {
+      "model": {
+        "class": "linear",
+        "states": {
+          "pos": {
+            "a": {"v": 1}
+          },
+          "v": {
+            "a": {"theta": "-(m * g) / (4/3 * M - m)"},
+            "b": {"u1":  "1 / (M - 3/4 * m)"}
+          },
+          "theta": {
+            "a": {"omega": 1}
+          },
+          "omega": {
+            "a": {"theta": "M * g / (l * (4/3 * M - m))"},
+            "b": {"u1": "-1 / (l * (4/3 * M - m))"}
+          }
+        },
+        "inputs": {
+          "u1": {
+            "unit": "rad/s"
+          }
+        },
+        "parameters": "plant"
+      },
+      "objective": {
+        "Q": [[10, 0, 0, 0], [0, 0, 0, 0], [0, 0, 10, 0], [0, 0, 0, 1]],
+        "R": [0.1]
+      }
+    }
+}

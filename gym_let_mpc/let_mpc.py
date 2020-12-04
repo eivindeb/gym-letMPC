@@ -1,0 +1,371 @@
+import gym
+from gym.utils import seeding
+import numpy as np
+import json
+from gym_let_mpc.simulator import ControlSystem
+from gym_let_mpc.controllers import ETMPC
+import collections.abc
+import matplotlib.pyplot as plt
+from gym_let_mpc.utils import str_replace_whole_words
+
+
+class LetMPCEnv(gym.Env):
+    def __init__(self, config_path):
+        with open(config_path) as file_object:
+            config = json.load(file_object)
+
+        if config["mpc"]["model"] == "plant":
+            config["mpc"]["model"] = config["plant"]["model"]
+        elif config["mpc"]["model"].get("parameters", None) == "plant":
+            config["mpc"]["model"]["parameters"] = config["plant"]["model"]["parameters"]
+
+        if config["lqr"]["model"] == "plant":
+            config["lqr"]["model"] = config["plant"]["model"]
+        elif config["lqr"]["model"] == "mpc":
+            config["lqr"]["model"] = config["mpc"]["model"]
+        elif config["lqr"]["model"].get("parameters", None) == "plant":
+            config["lqr"]["model"]["parameters"] = config["plant"]["model"]["parameters"]
+        elif config["lqr"]["model"].get("parameters", None) == "mpc":
+            config["lqr"]["model"]["parameters"] = config["mpc"]["model"]["parameters"]
+
+        self.config = config
+        assert "max_steps" in self.config["environment"]
+        self.max_steps = self.config["environment"]["max_steps"]
+
+        assert "randomize" in self.config["environment"]
+        assert "state" in self.config["environment"]["randomize"] and "reference" in self.config["environment"]["randomize"]
+        assert "render" in self.config["environment"]
+
+        self.control_system = ControlSystem(config["plant"], controller=ETMPC(config["mpc"], config["lqr"]))
+        self.history = None
+        self.steps_count = None
+        self.np_random = None
+        self.min_constraint_delta = 0.25  # TODO: how and where to set
+
+        obs_high = []
+        obs_low = []
+        for obs_var in self.config["environment"]["observation"]["variables"]:
+            for var_transform in obs_var.get("transform", ["none"]):
+                for lim_i, lim in enumerate(obs_var.get("limits", [None, None])):
+                    if lim is None:
+                        if lim_i == 0:
+                            obs_low.append(-np.finfo(np.float32).max)
+                        else:
+                            obs_high.append(np.finfo(np.float32).max)
+                    else:
+                        if var_transform == "none":
+                            if lim_i == 0:
+                                obs_low.append(lim)
+                            else:
+                                obs_high.append(lim)
+                        elif var_transform == "absolute":
+                            if lim_i == 0:
+                                obs_low.append(0)
+                            else:
+                                obs_high.append(lim)
+                        elif var_transform == "square":
+                            if lim_i == 0:
+                                obs_low.append(0)
+                            else:
+                                obs_high.append(lim ** 2)
+                        else:
+                            raise NotImplementedError
+        self.observation_space = gym.spaces.Box(low=np.array(obs_low, dtype=np.float32),
+                                                high=np.array(obs_high, dtype=np.float32),
+                                                dtype=np.float32)
+        self.action_space = gym.spaces.Discrete(2)
+
+        self.viewer = None
+
+    def seed(self, seed=None):
+        """
+        Seed the random number generator of the control system.
+        :param seed: (int) seed for random state
+        """
+        self.np_random, seed = gym.utils.seeding.np_random(seed)
+        self.control_system.seed(seed)
+        return [seed]
+
+    def reset(self, state=None, reference=None, constraint=None, model=None, process_noise=None, tvp=None):
+        """
+        Reset state of environment. Note that the simulator is reset, the MPC solution is computed and the first
+        MPC action is applied to the plant.
+
+        :param state: (dict) initial conditions (value) for state name (key).
+        :param reference: (dict) reference value (value) for reference name (key).
+        :param constraint: (dict) constraint values (value) for constraint names (key).
+        :param model: (dict) dictionary of dictionary where first key is model that it applies to ["plant", "mpc", "lqr"],
+        first value is dictionary of model parameters where second value is the specified model parameter value.
+        :param process_noise: (dict) process noise values (value) as ndarray for state name (key). The process noise at
+        each time step loops through the provided array.
+        :param tvp: (dict) values of time-varying parameters. New values are generated if values arent specified
+        for all time steps elapsed.
+        :return: ([float]) observation vector
+        """
+        def update_dict_recursively(d, u):
+            for k, v in u.items():
+                if isinstance(v, collections.abc.Mapping):
+                    d[k] = update_dict_recursively(d.get(k, {}), v)
+                else:
+                    d[k] = v
+            return d
+
+        sampled_state = self.sample_state()
+        sampled_reference = self.sample_reference()
+        sampled_constraint = self.sample_constraints()
+        sampled_model = self.sample_model()
+
+        if state is not None:
+            sampled_state.update(state)
+        elif len(sampled_state) == 0:
+            sampled_state = None
+        if reference is not None:
+            sampled_reference.update(reference)
+        elif len(sampled_reference) == 0:
+            sampled_reference = None
+        if constraint is not None:
+            sampled_constraint.update(constraint)
+        elif len(sampled_constraint) == 0:
+            sampled_constraint = None
+        if model is not None:
+            sampled_model = update_dict_recursively(sampled_model, model)
+        elif len(sampled_model) == 0:
+            sampled_model = None
+        self.control_system.reset(state=sampled_state, reference=sampled_reference, constraint=sampled_constraint,
+                                  model=sampled_model, process_noise=process_noise, tvp=tvp)
+        self.control_system.step(action=np.array([1]))
+        obs = self.get_observation()
+        self.history = {"obs": [obs], "actions": [], "rewards": []}
+        self.steps_count = 0
+
+        return obs
+
+    def step(self, action):
+        a_dict = {a_props["name"]: action[a_i]
+                                        for a_i, a_props in enumerate(self.config["environment"]["action"]["variables"])}
+
+        self.control_system.step(np.atleast_1d(int(a_dict["mpc_compute"])))
+        self.history["actions"].append(a_dict)
+        self.steps_count += 1
+        obs = self.get_observation()
+        done = self.steps_count >= self.max_steps
+        rew = self.get_reward(done=done)
+        info = {}
+        for category, v in self.config["environment"].get("info", {}).items():
+            if category == "reward":
+                info["reward"] = {}
+                for rew_name, rew_expr in v.items():
+                    info["reward"][rew_name] = self.get_reward(rew_expr, done=done)
+            else:
+                raise NotImplementedError
+
+        self.history["obs"].append(obs)
+        self.history["rewards"].append(rew)
+
+        return obs, rew, done, info
+
+    def render(self, mode='human', save_path=None):  # TODO: add env renders
+        figure, axes = None, None
+        if self.viewer is None:
+            env_plots = [plot_name for plot_name, make_plot in self.config["environment"]["render"].items() if make_plot]
+            if len(env_plots) > 0:
+                figure, axes = plt.subplots(self.control_system.render_n_axes + len(env_plots), sharex=True,
+                                            figsize=(9, 16))
+            self.viewer = self.control_system.render(figure=figure, axes=axes, return_viewer=True)
+            for i, plot in enumerate(env_plots):
+                self.viewer["axes"][plot] = axes[-(i + 1)]
+        else:
+            self.viewer = self.control_system.render(figure=figure, axes=axes, return_viewer=True)
+        for plot_name, make_plot in self.config["environment"]["render"].items():
+            if make_plot:
+                self.viewer["axes"][plot_name].set_ylabel("-".join(plot_name.split("_")[1:]))
+                x_data = np.array(range(self.steps_count)) * self.control_system.config["params"]["t_step"]
+                self.viewer["axes"][plot_name].clear()
+                if plot_name == "plot_action":
+                    for a_var in self.config["environment"]["action"]["variables"]:
+                        y_data = [step_a[a_var["name"]] for step_a in self.history["actions"]]
+                        self.viewer["axes"][plot_name].plot(x_data, y_data, label=a_var["name"], drawstyle="steps")
+                elif plot_name == "plot_reward":
+                    self.viewer["axes"][plot_name].plot(x_data, self.history["rewards"], label="reward")
+                    self.viewer["axes"][plot_name].text(max(x_data) + self.control_system.config["params"]["t_step"],
+                                                        self.history["rewards"][-1],
+                                                        "{:.3f}".format(np.sum(self.history["rewards"])))
+                else:
+                    raise ValueError
+        for axis in self.viewer["axes"].values():
+            axis.legend()
+        if save_path is not None:
+            self.viewer["figure"].savefig(save_path, bbox_inches="tight", format="png")
+            plt.close(self.viewer["figure"])
+        else:
+            self.viewer["figure"].show()
+
+    def get_observation(self):
+        obs = []
+        for var in self.config["environment"]["observation"]["variables"]:
+            var_val = self._get_variable_value(var)
+            for transform in var.get("transform", ["none"]):
+                if transform == "none":
+                    obs.append(var_val)
+                elif transform == "absolute":
+                    obs.append(abs(var_val))
+                elif transform == "square":
+                    obs.append(var_val ** 2)
+                else:
+                    raise ValueError
+
+        return np.array(obs)
+
+    def get_reward(self, rew_expr=None, done=False):
+        if rew_expr is None:
+            rew_expr = self.config["environment"]["reward"]["expression"]
+
+        rew_expr = str_replace_whole_words(rew_expr, "done", int(done))
+
+        for var in sorted(self.config["environment"]["reward"]["variables"], key=lambda x: len(x), reverse=True):
+            var_val = self._get_variable_value(var)
+            if isinstance(var_val, list) or isinstance(var_val, np.ndarray):  # TODO: needs to be better way to do this
+                var_val = var_val[0]
+            rew_expr = str_replace_whole_words(rew_expr, var["name"], var_val)
+
+        return eval(rew_expr)
+
+    def _get_variable_value(self, var):
+        if var["type"] == "state":
+            val = self.control_system.current_state[var["name"]]
+        elif var["type"] == "input":
+            if var.get("value_type", "absolute") == "absolute":
+                val = self.control_system.controller.current_input[var["name"]]
+            elif var.get("value_type") == "delta":
+                val = self.control_system.controller.history["inputs"][-2][var["name"]] - \
+                      self.control_system.controller.current_input[var["name"]]
+            else:
+                raise ValueError
+        elif var["type"] == "reference":
+            val = self.control_system.controller.current_reference[var["name"]]
+        elif var["type"] == "tvp":
+            val = self.control_system.tvps[var["name"]].get_values(self.steps_count)
+        elif var["type"] == "error":
+            val = self.control_system.controller.history["errors"][-1][var["name"]]
+            if np.isnan(val):
+                val = 0
+        elif var["type"] == "epsilon":
+            val = self.control_system.controller.history["epsilons"][-1][var["name"]]
+            if np.isnan(val):
+                val = 0
+            if isinstance(val, np.ndarray):
+                val = val[0]
+        elif var["type"] == "constraint":
+            if var.get("value_type") == "distance":
+                val = self.control_system.get_constraint_distances((var["name"],))[var["name"]]
+            else:
+                raise ValueError
+        elif var["type"] == "action":
+            if var.get("value_type", "agent") == "agent":
+                val = self.history["actions"][-1][var["name"]]
+            elif var.get("value_type") == "controller":
+                val = self.control_system.controller.history[var["name"]][-1]
+            else:
+                raise ValueError
+        elif var["type"] == "time":
+            if var.get("value_type") == "fraction":
+                val = self.control_system.controller.steps_since_mpc_computation / self.control_system.controller.mpc.n_horizon
+            elif var.get("value_type") == "absolute":
+                val = self.control_system.controller.steps_since_mpc_computation
+            else:
+                raise ValueError
+        elif var["type"] == "parameter":
+            if var["value_type"] in ["plant", "mpc", "lqr"]:
+                val = self.config[var["value_type"]]["model"]["parameters"][var["name"]]
+            else:
+                raise ValueError
+        else:
+            raise ValueError
+
+        if "limits" in var:
+            val = np.clip(val, var["limits"][0], var["limits"][1])
+
+        return val
+
+    def sample_constraints(self):
+        constraints = {}
+        for c_name, c_props in self.config["environment"].get("randomize", {}).get("constraints", {}).items():
+            constraint_val = getattr(self.np_random, c_props["type"])(**c_props["kw"])
+            if c_name.split("-")[1] in [k.split("-")[1] for k in constraints.keys()]:
+                other_bound_type = "u" if c_name.split("-")[2] == "l" else "l"
+                other_bound_val = constraints[c_name[:-1] + other_bound_type]
+                if other_bound_type == "u":
+                    constraint_val = min(other_bound_val - self.min_constraint_delta, constraint_val)
+                else:
+                    constraint_val = max(other_bound_val + self.min_constraint_delta, constraint_val)
+            constraints[c_name] = constraint_val
+        return constraints
+
+    def sample_state(self):
+        state = {}
+        for s_name, s_props in self.config["environment"].get("randomize", {}).get("state", {}).items():
+            state[s_name] = getattr(self.np_random, s_props["type"])(**s_props["kw"])
+
+        return state
+
+    def sample_reference(self):
+        reference = {}
+        for r_name, r_props in self.config["environment"].get("randomize", {}).get("reference", {}).items():
+            reference[r_name] = getattr(self.np_random, r_props["type"])(**r_props["kw"])
+
+        return reference
+
+    def sample_model(self):
+        model = {}
+        for s_name, s_props in self.config["environment"].get("randomize", {}).get("model", {}).get("states", {}).items():
+            model["states"] = {s_name: {}}
+            for component_name, component_props in s_props.items():
+                model["states"][s_name][component_name] = \
+                    {comp_v_name: getattr(self.np_random, v_prop["type"])(**v_prop["kw"])
+                                    for comp_v_name, v_prop in component_props.items()}
+
+        model = {dest: model for dest in self.config["environment"].get("randomize", {}).get("model", {}).get("apply", [])}
+        return model
+
+    def stop(self):
+        pass
+
+    def create_dataset(self, n_scenarios):
+        dataset = []
+        self.reset()
+        for i in range(n_scenarios):
+            process_noise = np.array([self.control_system._get_process_noise() for i in range(self.max_steps)])
+            ep_dict = {"state": self.sample_state(), "reference": self.sample_reference(),
+                            "constraint": self.sample_constraints(), "model": self.sample_model(),
+                       "process_noise": {}, "tvp": {}}
+            s_i = 0
+            for s_name, s_props in self.config["plant"]["model"]["states"].items():
+                if "W" in s_props:
+                    ep_dict["process_noise"][s_name] = process_noise[:, s_i]
+                    s_i += 1
+            for tvp_name, tvp_obj in self.control_system.tvps.items():
+                tvp_obj.generate_values(self.max_steps)
+                ep_dict["tvp"][tvp_name] = tvp_obj.values
+            dataset.append(ep_dict)
+            self.reset()
+
+        return dataset
+
+
+if __name__ == "__main__":
+    env = LetMPCEnv("configs/cart_pendulum.json")
+    env.seed(0)
+
+    for i in range(1):
+        obs = env.reset()
+
+        done = False
+        while not done:
+            obs, rew, done, info = env.step([env.steps_count % 5 == 0])
+
+        env.render()
+
+        
+
+
+
