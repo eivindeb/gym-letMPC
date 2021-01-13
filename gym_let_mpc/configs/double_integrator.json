@@ -168,6 +168,7 @@
     }
   },
   "mpc": {
+    "type": "ETMPC",
     "params": {
       "n_horizon": 20,
       "t_step": 0.1,

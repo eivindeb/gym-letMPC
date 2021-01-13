@@ -158,18 +158,28 @@ class LetMPCEnv(gym.Env):
         a_dict = {a_props["name"]: action[a_i]
                                         for a_i, a_props in enumerate(self.config["environment"]["action"]["variables"])}
 
-        self.control_system.step(np.atleast_1d(int(a_dict["mpc_compute"])))
+        self.control_system.step(np.round(a_dict["mpc_horizon"]).astype(np.int32))#np.atleast_1d(int(a_dict["mpc_compute"])))
         self.history["actions"].append(a_dict)
         self.steps_count += 1
-        obs = self.get_observation()
-        done = self.steps_count >= self.max_steps
-        rew = self.get_reward(done=done)
+
         info = {}
+        obs = self.get_observation()
+        done = False
+        if self.steps_count >= self.max_steps:
+            done = True
+            info["termination"] = "steps"
+        elif len(self.config["environment"].get("end_on_constraint_violation", [])) > 0:
+            for c_name, c_d in self.control_system.get_constraint_distances().items():
+                if c_name.split("-")[1] in self.config["environment"]["end_on_constraint_violation"] and c_d > 0:
+                    done = True
+                    info["termination"] = "constraint"
+                    break
+
+        rew = self.get_reward(done=done)
         for category, v in self.config["environment"].get("info", {}).items():
             if category == "reward":
-                info["reward"] = {}
                 for rew_name, rew_expr in v.items():
-                    info["reward"][rew_name] = self.get_reward(rew_expr, done=done)
+                    info["reward/{}".format(rew_name)] = self.get_reward(rew_expr, done=done)
             else:
                 raise NotImplementedError
 
@@ -280,8 +290,6 @@ class LetMPCEnv(gym.Env):
             val = self.control_system.controller.history["epsilons"][-1][var["name"]]
             if np.isnan(val):
                 val = 0
-            if isinstance(val, np.ndarray):
-                val = val[0]
         elif var["type"] == "constraint":
             if var.get("value_type") == "distance":
                 val = self.control_system.get_constraint_distances((var["name"],))[var["name"]]
@@ -309,6 +317,8 @@ class LetMPCEnv(gym.Env):
         else:
             raise ValueError
 
+        if isinstance(val, np.ndarray):
+            val = val[0]
         if "limits" in var:
             val = np.clip(val, var["limits"][0], var["limits"][1])
 
