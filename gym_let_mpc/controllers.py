@@ -151,10 +151,11 @@ class LQR:
         # ref Bertsekas, p.151
 
         # first, try to solve the ricatti equation
-        self.S = np.matrix(scipy.linalg.solve_continuous_are(self.A, self.B, self.Q, self.R))
+        self.S = np.matrix(scipy.linalg.solve_discrete_are(self.A, self.B, self.Q, self.R))
 
         # compute the LQR gain
-        self.K = np.matrix(scipy.linalg.inv(np.atleast_2d(self.R)) * (self.B.T * self.S))
+        #self.K = np.matrix(scipy.linalg.inv(np.atleast_2d(self.R)) * (self.B.T * self.S))
+        self.K = np.matrix(scipy.linalg.inv(np.atleast_2d(self.B.T * self.S * self.B + self.R)) * self.B.T * self.S * self.A)
 
         self.E, eigVecs = scipy.linalg.eig(self.A - self.B * self.K)
 
