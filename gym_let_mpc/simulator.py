@@ -188,7 +188,7 @@ class ControlSystem:
                 self.current_state[state_name] = state[state_name]
             else:
                 self.current_state[state_name] = self.initial_state[state_name]
-        self.simulator.x0 = self._get_state_vector(self.current_state)
+        self.simulator.x0 = self.get_state_vector(self.current_state)
         
         self._preset_process_noise = process_noise
         self._process_noise_props = {s_name: {} for s_name in self.state_names}
@@ -227,7 +227,7 @@ class ControlSystem:
             clip = self.config["model"]["states"][state].get("clip", None)
             if clip is not None:
                 self.current_state[state] = np.clip(self.current_state[state], clip[0], clip[1])
-        self.simulator._x0.master = self._get_state_vector(self.current_state)  # TODO: remove this
+        self.simulator._x0.master = self.get_state_vector(self.current_state)  # TODO: remove this
         self.history["state"].append(copy.deepcopy(self.current_state))
         self.history["process_noise"].append(step_process_noise)
         self.history["tvp"].append({name: self.tvps[name].get_values(self._step_count + 1)
@@ -276,7 +276,7 @@ class ControlSystem:
 
         return self._tvp_template
 
-    def _get_state_vector(self, state):
+    def get_state_vector(self, state):
         """
         Get controller state vector (x) from state dictionary.
         :param state: (dict) dictionary of string state name keys with float state values.
