@@ -17,6 +17,7 @@ def initialize_mpc_model(config):
     states = {}
     inputs = {}
     tvps = {}
+    ps = {}
     for state_name in sorted(config["states"]):
         states[state_name] = model.set_variable(var_type="_x", var_name=state_name, shape=(1, 1))
 
@@ -25,6 +26,9 @@ def initialize_mpc_model(config):
 
     for tvp_name in sorted(config.get("tvps", {})):
         tvps[tvp_name] = model.set_variable(var_type="_tvp", var_name=tvp_name, shape=(1, 1))
+
+    for p_name in sorted(config.get("ps", {})):
+        ps[p_name] = model.set_variable(var_type="_p", var_name=p_name, shape=(1, 1))
 
     if config["class"] == "linear":
         for state_name, state_props in config["states"].items():
