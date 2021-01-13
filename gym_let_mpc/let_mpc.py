@@ -3,10 +3,11 @@ from gym.utils import seeding
 import numpy as np
 import json
 from gym_let_mpc.simulator import ControlSystem
-from gym_let_mpc.controllers import ETMPC
+from gym_let_mpc.controllers import ETMPC, AHMPC
 import collections.abc
 import matplotlib.pyplot as plt
 from gym_let_mpc.utils import str_replace_whole_words
+import copy
 
 
 class LetMPCEnv(gym.Env):
@@ -15,18 +16,18 @@ class LetMPCEnv(gym.Env):
             config = json.load(file_object)
 
         if config["mpc"]["model"] == "plant":
-            config["mpc"]["model"] = config["plant"]["model"]
+            config["mpc"]["model"] = copy.deepcopy(config["plant"]["model"])
         elif config["mpc"]["model"].get("parameters", None) == "plant":
-            config["mpc"]["model"]["parameters"] = config["plant"]["model"]["parameters"]
+            config["mpc"]["model"]["parameters"] = copy.deepcopy(config["plant"]["model"]["parameters"])
 
         if config["lqr"]["model"] == "plant":
-            config["lqr"]["model"] = config["plant"]["model"]
+            config["lqr"]["model"] = copy.deepcopy(config["plant"]["model"])
         elif config["lqr"]["model"] == "mpc":
-            config["lqr"]["model"] = config["mpc"]["model"]
+            config["lqr"]["model"] = copy.deepcopy(config["mpc"]["model"])
         elif config["lqr"]["model"].get("parameters", None) == "plant":
-            config["lqr"]["model"]["parameters"] = config["plant"]["model"]["parameters"]
+            config["lqr"]["model"]["parameters"] = copy.deepcopy(config["plant"]["model"]["parameters"])
         elif config["lqr"]["model"].get("parameters", None) == "mpc":
-            config["lqr"]["model"]["parameters"] = config["mpc"]["model"]["parameters"]
+            config["lqr"]["model"]["parameters"] = copy.deepcopy(config["mpc"]["model"]["parameters"])
 
         self.config = config
         assert "max_steps" in self.config["environment"]
@@ -35,8 +36,19 @@ class LetMPCEnv(gym.Env):
         assert "randomize" in self.config["environment"]
         assert "state" in self.config["environment"]["randomize"] and "reference" in self.config["environment"]["randomize"]
         assert "render" in self.config["environment"]
-
-        self.control_system = ControlSystem(config["plant"], controller=ETMPC(config["mpc"], config["lqr"]))
+        if config["mpc"]["type"] == "ETMPC":
+            assert len(config["environment"]["action"]["variables"]) == 1 and \
+                   config["environment"]["action"]["variables"][0]["name"] == "mpc_compute"
+            controller = ETMPC(config["mpc"], config["lqr"])
+            self.action_space = gym.spaces.Discrete(2)
+        elif config["mpc"]["type"] == "AHMPC":
+            assert len(config["environment"]["action"]["variables"]) == 1 and \
+                   config["environment"]["action"]["variables"][0]["name"] == "mpc_horizon"
+            controller = AHMPC(config["mpc"])
+            self.action_space = gym.spaces.Box(low=np.array([1]), high=np.array([50]), dtype=np.float32)
+        else:
+            raise ValueError
+        self.control_system = ControlSystem(config["plant"], controller=controller)
         self.history = None
         self.steps_count = None
         self.np_random = None
@@ -73,7 +85,8 @@ class LetMPCEnv(gym.Env):
         self.observation_space = gym.spaces.Box(low=np.array(obs_low, dtype=np.float32),
                                                 high=np.array(obs_high, dtype=np.float32),
                                                 dtype=np.float32)
-        self.action_space = gym.spaces.Discrete(2)
+
+        self.value_function_is_set = False
 
         self.viewer = None
 
@@ -133,7 +146,8 @@ class LetMPCEnv(gym.Env):
             sampled_model = None
         self.control_system.reset(state=sampled_state, reference=sampled_reference, constraint=sampled_constraint,
                                   model=sampled_model, process_noise=process_noise, tvp=tvp)
-        self.control_system.step(action=np.array([1]))
+        if self.config["mpc"]["type"] == "ETMPC":
+            self.control_system.step(action=np.array([1]))
         obs = self.get_observation()
         self.history = {"obs": [obs], "actions": [], "rewards": []}
         self.steps_count = 0
@@ -158,6 +172,19 @@ class LetMPCEnv(gym.Env):
                     info["reward"][rew_name] = self.get_reward(rew_expr, done=done)
             else:
                 raise NotImplementedError
+
+        if self.value_function_is_set:
+            step_vf_data = {"mpc_state": self.control_system.get_state_vector(self.control_system.history["state"][-2]),
+                            "mpc_next_state": self.control_system.controller.mpc_state_preds[:, -1, -1]}
+            step_vf_data["mpc_n_horizon"] = self.control_system.controller.history["mpc_horizon"][-1]
+            info["mpc_value_fn"] = (self.control_system.controller.value_function.eval([step_vf_data["mpc_next_state"].reshape(1, -1)])[0][0, 0]).astype(np.float64)
+            step_vf_data["mpc_rewards"] = self.control_system.controller.mpc.opt_f_num.toarray()[0, 0] - \
+                                          self.config["mpc"]["objective"].get("discount_factor") ** (step_vf_data["mpc_n_horizon"] + 1) * info["mpc_value_fn"]
+            info["mpc_computation_time"] = sum([v for k, v in self.control_system.controller.mpc.solver_stats.items() if k.startswith("t_proc")])
+            info["data"] = step_vf_data
+            info["mpc_avg_stage_cost"] = step_vf_data["mpc_rewards"] / step_vf_data["mpc_n_horizon"]
+
+        info.update({k: v.astype(np.float64) if hasattr(v, "dtype") else v for k, v in a_dict.items()})
 
         self.history["obs"].append(obs)
         self.history["rewards"].append(rew)
@@ -351,19 +378,61 @@ class LetMPCEnv(gym.Env):
 
         return dataset
 
+    def set_value_function(self, input_ph, output_ph, tf_session):
+        self.control_system.controller.set_value_function(input_ph, output_ph, tf_session)
+        self.value_function_is_set = True
 
-if __name__ == "__main__":
-    env = LetMPCEnv("configs/cart_pendulum.json")
+    def set_learning_status(self, status):
+        if self.value_function_is_set:
+            self.control_system.controller.value_function.set_enabled(status)
+
+
+if __name__ == "__main__":  # TODO: constraints on pendulum and end episode if constraints violated
+    env = LetMPCEnv("configs/cart_pendulum_horizon.json")
     env.seed(0)
 
+    """
+    from tensorflow_casadi import TensorFlowEvaluator, MLP
+    import tensorflow as tf
+    a = tf.placeholder(shape=(None, 4), dtype=tf.float32)
+    mlp = MLP(a)
+    sess = tf.Session()
+    val_fun = TensorFlowEvaluator([mlp.input_ph], [mlp.output], sess)
+    env.set_value_function(mlp.input_ph, mlp.output, sess)
+    """
+
+    import pickle
+    with open("../../lmpc-horizon/datasets/cart_pendulum_10.pkl", "rb") as f:
+        test_set = pickle.load(f)
+
+    rews = {}
+
     for i in range(1):
-        obs = env.reset()
+        import time
+        obs = env.reset(**test_set[5])
 
         done = False
+        t_before = time.process_time()
+        horizon = 10
         while not done:
-            obs, rew, done, info = env.step([env.steps_count % 5 == 0])
+            t_step = time.process_time()
+            if env.steps_count % 1 == 0 and False:
+                horizon = 25 if horizon == 50 else 50
+            obs, rew, done, info = env.step([horizon])#[np.random.randint(1, 10)])
+            for rew_comp, v in info.items():
+                if rew_comp.startswith("reward/"):
+                    if rew_comp not in rews:
+                        rews[rew_comp] = []
+                    rews[rew_comp].append(v)
+            if time.process_time() - t_step > 1:
+                print(env.control_system.controller.mpc.solver_stats)
+            print(env.steps_count)
 
+        for k, v in rews.items():
+            print("{}: {}".format(k, sum(v)))
+        print("Elapsed time {}".format(time.process_time() - t_before))
         env.render()
+
 
         
 
