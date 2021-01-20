@@ -165,21 +165,25 @@ class LetMPCEnv(gym.Env):
         info = {}
         obs = self.get_observation()
         done = False
+        additional_rew = 0
         if self.steps_count >= self.max_steps:
             done = True
             info["termination"] = "steps"
         elif len(self.config["environment"].get("end_on_constraint_violation", [])) > 0:
             for c_name, c_d in self.control_system.get_constraint_distances().items():
-                if c_name.split("-")[1] in self.config["environment"]["end_on_constraint_violation"] and c_d > 0:
+                if (c_name.startswith("clin-") or (c_name.startswith("cnlin-") and c_name.endswith("h"))) and\
+                        c_name.split("-")[1] in self.config["environment"]["end_on_constraint_violation"] and c_d > 0:
                     done = True
                     info["termination"] = "constraint"
+                    additional_rew = -100 * (self.max_steps - self.steps_count)
                     break
 
-        rew = self.get_reward(done=done)
+        rew = self.get_reward(done=done, info=info)
+        rew += additional_rew
         for category, v in self.config["environment"].get("info", {}).items():
             if category == "reward":
                 for rew_name, rew_expr in v.items():
-                    info["reward/{}".format(rew_name)] = self.get_reward(rew_expr, done=done)
+                    info["reward/{}".format(rew_name)] = self.get_reward(rew_expr, done=done, info=info)
             else:
                 raise NotImplementedError
 
@@ -253,7 +257,7 @@ class LetMPCEnv(gym.Env):
 
         return np.array(obs)
 
-    def get_reward(self, rew_expr=None, done=False):
+    def get_reward(self, rew_expr=None, done=False, info=None):
         if rew_expr is None:
             rew_expr = self.config["environment"]["reward"]["expression"]
 

@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import matplotlib.lines
 import collections.abc
 from gym_let_mpc.utils import str_replace_whole_words, TensorFlowEvaluator
+import casadi
 
 
 def initialize_mpc(model, config, tvp_fun=None, p_fun=None, suppress_IPOPT_output=True, linear_solver="MA27", value_function=None):
@@ -79,30 +80,40 @@ def mpc_set_objective(mpc, cost_parameters, reference=None, parameters=None, val
 
 def mpc_set_constraints(mpc, constraints):
     for c in constraints:
-        if c.get("soft", False):  # TODO: support for arbitrary expressions
-            if c["var_type"] == "_x":
-                expr = mpc.model.x[c["var_name"]]
-            elif c["var_type"] == "_u":
-                expr = mpc.model.u[c["var_name"]]
-            else:
-                raise NotImplementedError
-
-            if c["constraint_type"] == "lower":
-                expr = expr * -1
-                c["value"] *= -1
-
-            mpc.set_nl_cons("csoft-{}-{}".format(c["var_name"], c["constraint_type"][0]),
-                            expr, soft_constraint=True, penalty_term_cons=c["cost"],
-                            ub=c["value"])
+        if "variables" in c:
+            expr = c["expression"]
+            for var in sorted(c["variables"], key=lambda x: len(x["name"]), reverse=True):
+                if var["type"] in ["_x", "_u", "_tvp", "_aux"]:
+                    expr = str_replace_whole_words(expr, var["name"],
+                                                   'mpc.model.{}["{}"]'.format(var["type"][1:], var["name"]))
+                else:
+                    raise ValueError
+            mpc.set_nl_cons(c["name"], eval(expr), ub=c["value"], soft_constraint=c.get("soft", False), penalty_term_cons=c["cost"])
         else:
-            mpc.bounds[c["constraint_type"], c["var_type"], c["var_name"]] = c["value"]
+            if c.get("soft", False):  # TODO: support for arbitrary expressions
+                if c["type"] == "_x":
+                    expr = mpc.model.x[c["name"]]
+                elif c["type"] == "_u":
+                    expr = mpc.model.u[c["name"]]
+                else:
+                    raise NotImplementedError
+
+                if c["constraint_type"] == "lower":
+                    expr = expr * -1
+                    c["value"] *= -1
+
+                mpc.set_nl_cons("csoft-{}-{}".format(c["name"], c["constraint_type"][0]),
+                                expr, soft_constraint=True, penalty_term_cons=c["cost"],
+                                ub=c["value"])
+            else:
+                mpc.bounds[c["constraint_type"], c["type"], c["name"]] = c["value"]
 
     return mpc
 
 
 def mpc_set_scaling(mpc, scaling):
     for s in scaling:
-        mpc.scaling[s["var_type"], s["state_name"]] = s["value"]
+        mpc.scaling[s["type"], s["state_name"]] = s["value"]
 
     return mpc
 
@@ -224,7 +235,16 @@ class LMPC:
 
         self.constraints = {}
         for c in mpc_config["constraints"]:
-            self.constraints["c-{}-{}".format(c["var_name"], c["constraint_type"][0])] = c
+            if "expression" in c:
+                c_type = "cnlin"
+                bound_type = None
+            else:
+                if c.get("soft"):
+                    c_type = "clins"
+                else:
+                    c_type = "clin"
+                bound_type = c.get("constraint_type", "u")[0]
+            self.constraints["{}-{}{}".format(c_type, c["name"], "-{}".format(bound_type) if bound_type is not None else "")] = c
 
         self.initial_state = np.zeros((self.mpc.model.n_x,))
 
@@ -299,8 +319,9 @@ class LMPC:
                                         color=next(self.viewer["axes"][state_name]._get_lines.prop_cycler)["color"])
             )
 
-        for constraint_name in self.constraints:
-            self._add_constraint_plot_line(constraint_name)
+        for constraint_name, c_props in self.constraints.items():
+            if not constraint_name.startswith("cnlin-") and c_props.get("render", True):
+                self._add_constraint_plot_line(constraint_name)
 
         return self.viewer
 
@@ -369,14 +390,15 @@ class LMPC:
             self.viewer["reference_lines"][r_name].set_data(ref_data_x, r_data)
 
         for c_name, c_props in self.constraints.items():
-            if c_props.get("soft", False) and c_props["constraint_type"] == "lower":
-                c_val = c_props["value"] * -1
-            else:
-                c_val = c_props["value"]
-            self.viewer["constraint_lines"][c_name].set_data(
-                [0, (len(self.history["inputs"]) - 1) * self.mpc.data.meta_data['t_step']],
-                [c_val, c_val]
-            )
+            if c_name in self.viewer["constraint_lines"]:
+                if c_props.get("soft", False) and c_props["constraint_type"] == "lower":
+                    c_val = c_props["value"] * -1
+                else:
+                    c_val = c_props["value"]
+                self.viewer["constraint_lines"][c_name].set_data(
+                    [0, (len(self.history["inputs"]) - 1) * self.mpc.data.meta_data['t_step']],
+                    [c_val, c_val]
+                )
 
         if show:
             self.viewer["fig"].show()
@@ -428,15 +450,15 @@ class LMPC:
             for c_name in constraints:
                 c_name_parts = c_name.split("-")
                 if c_name not in self.constraints:
-                    self.constraints[c_name] = {"var_name": c_name_parts[1],
-                                                "var_type": "_{}".format(c_name_parts[1][0]),
+                    self.constraints[c_name] = {"name": c_name_parts[1],
+                                                "type": "_{}".format(c_name_parts[1][0]),
                                                 "constraint_type": "upper" if c_name_parts[-1] == "u" else "lower"}
                     self._add_constraint_plot_line(c_name)
                     self.mpc_config["constraints"].append(self.constraints[c_name])
                 self.constraints[c_name]["value"] = constraints[c_name]["value"]
 
                 for c_i, c in enumerate(self.mpc_config["constraints"]):
-                    if c["var_name"] == c_name_parts[1] and c["constraint_type"] == (
+                    if c["name"] == c_name_parts[1] and c["constraint_type"] == (
                     "upper" if c_name_parts[-1] == "u" else "lower"):
                         self.mpc_config["constraints"][c_i]["value"] = constraints[c_name]["value"]
             self._initialize_mpc(mpc_model=self.mpc.model)
