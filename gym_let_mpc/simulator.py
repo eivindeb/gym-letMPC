@@ -157,7 +157,10 @@ class ControlSystem:
                             if sim_config["model"]["inputs"][name].get("raw_action")}
 
         self.viewer = None
-        self.render_n_axes = self.simulator.model.n_x + self.simulator.model.n_u
+        self.render_n_axes = getattr(self.controller, "extra_render_axes", 0)
+        for props in list(sim_config["model"]["states"].values()) + list(sim_config["model"]["inputs"].values()):
+            if props.get("render", True):
+                self.render_n_axes += 1
         if sim_config["render"].get("tvp", False):
             self.render_n_axes += len(self.tvps)
         self.np_random = None
@@ -325,27 +328,40 @@ class ControlSystem:
         if self.viewer is not None and "sim_graphics" in self.viewer:
             self.viewer["sim_graphics"].data = self.simulator.data
 
-    def configure_viewer(self, figure=None, axes=None):
-        assert figure is None or axes is not None
+    def configure_viewer(self, figure=None, axis_objects=None):
+        assert figure is None or axis_objects is not None
         if figure is None:
-            figure, axes = plt.subplots(self.render_n_axes, sharex=True, figsize=(9, 16))
-        axes = {k: axes[i] for i, k in enumerate(mpc_model_get_variable_names(self.simulator.model, "_x") +
-                                                 mpc_model_get_variable_names(self.simulator.model, "_u") +
-                                                 (list(self.tvps.keys()) if self.config["render"].get("tvp", False)
-                                                                        else []))}
+            figure, axis_objects = plt.subplots(self.render_n_axes, sharex=False, figsize=(9, 16))
+
         self.viewer = {
             "sim_graphics": do_mpc.graphics.Graphics(self.simulator.data),
             "figure": figure,
-            "axes": axes
+            "axes": {},
+            "axis_objects": axis_objects
         }
+
+        for state, props in self.config["model"]["states"].items():
+            if props.get("render", True):
+                self.viewer["axes"][state] = axis_objects[len(self.viewer["axes"])]
+
+        for control_input, props in self.config["model"]["inputs"].items():
+            if props.get("render", True):
+                self.viewer["axes"][control_input] = axis_objects[len(self.viewer["axes"])]
+
+        if self.config["render"].get("tvp", False):
+            for tvp in self.tvps.keys():
+                self.viewer["axes"][tvp] = axis_objects[len(self.viewer["axes"])]
+
         for state in mpc_model_get_variable_names(self.simulator.model, "_x"):
-            self.viewer["sim_graphics"].add_line("_x", state, axis=axes[state], label=state)
-            self.viewer["axes"][state].set_ylabel(state)
+            if self.config["model"]["states"][state].get("render", True):
+                self.viewer["sim_graphics"].add_line("_x", state, axis=self.viewer["axes"][state], label=state)
+                self.viewer["axes"][state].set_ylabel(state)
 
         for control_input in mpc_model_get_variable_names(self.simulator.model, "_u"):
-            self.viewer["sim_graphics"].add_line("_u", control_input, axis=self.viewer["axes"][control_input],
-                                                 label=control_input)
-            self.viewer["axes"][control_input].set_ylabel(control_input)
+            if self.config["model"]["inputs"][control_input].get("render", True):
+                self.viewer["sim_graphics"].add_line("_u", control_input, axis=self.viewer["axes"][control_input],
+                                                     label=control_input)
+                self.viewer["axes"][control_input].set_ylabel(control_input)
 
         self.viewer["axes"][control_input].set_xlabel("time [s]")
 

@@ -252,6 +252,7 @@ class LMPC:
         self._mpc_action_sequence = None
 
         self.history = None
+        self.extra_render_axes = 0
 
     def reset(self, state=None, reference=None, constraint=None, tvp=None):
         if reference is not None:
@@ -288,8 +289,8 @@ class LMPC:
         raise NotImplementedError
 
     def configure_viewer(self, viewer=None, plot_prediction=True):
-        if viewer is None:
-            fig, axes = plt.subplots(self.mpc.model.n_x + self.mpc.model.n_u, sharex=True, figsize=(9, 16))
+        if viewer is None:  # TODO: fix checking of render property in config of state and input here
+            fig, axes = plt.subplots(self.mpc.model.n_x + self.mpc.model.n_u, sharex=False, figsize=(9, 16))
             axes = {k: axes[i] for i, k in enumerate(mpc_model_get_variable_names(self.mpc.model, "_x") +
                                                      mpc_model_get_variable_names(self.mpc.model, "_u"))}
             viewer = {
@@ -436,7 +437,7 @@ class LMPC:
     def _get_p_values(self, t_now):
         raise NotImplementedError
 
-    def update_reference(self, reference):  # TODO: changing mpc components require setting up new model, thereby throwing away data. Maybe not allow during operation.
+    def update_reference(self, reference):  # TODO: changing mpc components require setting up new model, thereby throwing away data. Maybe not allow during operation. Change reference to be TVP
         if len(reference) > 0:
             assert reference.keys() <= self.current_reference.keys()
             self.current_reference.update(reference)
@@ -719,6 +720,122 @@ class AHMPC(LMPC):
         else:
             self._p_template["_p", 0, "n_horizon"] = self.history["mpc_horizon"][-1]
 
+        return self._p_template
+
+
+class TTAHMPC(AHMPC):
+    def __init__(self, mpc_config, mpc_model=None, viewer=None):
+        if "tvps" not in mpc_config["model"]:
+            mpc_config["model"]["tvps"] = {}
+
+        for comp in ["x", "y", "u_s"]:
+            mpc_config["model"]["tvps"]["trajectory_{}".format(comp)] = {
+                "true": [{
+                    "redraw_probability": 0,
+                    "type": "constant",
+                    "kw": {
+                        "value": 0
+                    }
+                }]
+            }
+
+        self.n_objects = mpc_config["params"].pop("n_objects", 0)
+        if self.n_objects > 0:
+            if "auxs" not in mpc_config["model"]:
+                mpc_config["model"]["auxs"] = {}
+            data = {"low": 0.1, "high": 1, "sigma": 0.05, "theta": 0.75}
+            for obj_i in range(self.n_objects):
+                for comp in ["x", "y", "r"]:
+                    mpc_config["model"]["tvps"]["obj_{}_{}".format(obj_i, comp)] = {"true": [
+                        {
+                          "type": "uniform",
+                          "forecast_aware": True,
+                          "redraw_probability": 0,
+                          "kw": {
+                            "low": data["low"],
+                            "high": data["high"]
+                          }
+                        }
+                      ],
+                      "forecast": [
+                        {
+                          "starts_at": 15,
+                          "type": "OU",
+                          "kw": {
+                            "mean": 0,
+                            "sigma": data["sigma"],
+                            "theta": data["theta"],
+                            "dt": 0.1
+                          }
+                        }
+                      ]
+                    }
+                mpc_config["model"]["auxs"]["obj_{}_distance".format(obj_i)] = {
+                    "variables": [
+                                     {"name": "obj_{}_{}".format(obj_i, comp),
+                                      "type": "_tvp"} for comp in ["r", "x", "y"]
+                                 ] + [
+                                     {"name": state,
+                                      "type": "_x"} for state in ["x", "y"]
+                                 ],
+                    "expression": "-(casadi.sqrt((obj_{}_x - x) ** 2 + (obj_{}_y - y) ** 2) - obj_{}_r)".format(obj_i, obj_i, obj_i),
+                }
+                for soft_constraint in [True, False]:
+                    mpc_config["constraints"].append({
+                        "variables": [{"name": "obj_{}_distance".format(obj_i), "type": "_aux"}] +
+                                     ([{"name": "obj_{}_r".format(obj_i), "type": "_tvp"}] if soft_constraint else []),
+                        "soft": soft_constraint,
+                        "expression": "obj_{}_distance".format(obj_i) + ("+0.5 * obj_{}_r".format(obj_i) if soft_constraint else ""),
+                        "cost": 100,
+                        "value": 0,
+                        "aux": True,
+                        "name": "obj_{}_distance-{}".format(obj_i, "s" if soft_constraint else "h")  # TODO: fix this shit better naming
+                    })
+        else:
+            self.n_objects = 0
+        super().__init__(mpc_config, mpc_model=mpc_model, viewer=viewer)
+        self.trajectory = None
+        self.u_s_ref = 3 * self.mpc_config["params"]["t_step"]
+        self.extra_render_axes = 1
+        self.goal_x = None
+        self.goal_y = None
+
+    def reset(self, state=None, reference=None, constraint=None, tvp=None):
+        super().reset(state=state, reference=reference, constraint=constraint, tvp=tvp)
+
+    def configure_viewer(self, viewer=None, plot_prediction=False):
+        viewer = super().configure_viewer(viewer=viewer, plot_prediction=False)
+        viewer["axes"]["trajectory"] = viewer["axis_objects"][len(viewer["axes"])]
+        viewer["trajectory_lines"] = {}
+        viewer["trajectory_lines"]["vehicle"] = viewer["axes"]["trajectory"].plot([], [], label="vehicle")[0]
+        viewer["trajectory_lines"]["trajectory"] = viewer["axes"]["trajectory"].plot([], [], label="trajectory", linestyle="dashed")[0]
+        viewer["obstacle_patches"] = []
+        for obj_i in range(self.n_objects):
+            viewer["obstacle_patches"].append(plt.Circle((0, 0), 1, color="g"))
+            viewer["axes"]["trajectory"].add_patch(viewer["obstacle_patches"][obj_i])
+
+        self.viewer = viewer
+        return self.viewer
+
+    def render(self, show=True):
+        super().render(show=False)
+        self.viewer["trajectory_lines"]["vehicle"].set_data(self.mpc.data["_x", "x"].ravel(), self.mpc.data["_x", "y"].ravel())
+        self.viewer["trajectory_lines"]["trajectory"].set_data([step["trajectory_x"][0] for step in self.history["tvp"]],
+                                                               [step["trajectory_y"][0] for step in self.history["tvp"]])
+        for obj_i in range(self.n_objects):
+            self.viewer["obstacle_patches"][obj_i].center = (self._tvp_data["obj_{}_x".format(obj_i)][0], self._tvp_data["obj_{}_y".format(obj_i)][0])
+            self.viewer["obstacle_patches"][obj_i].radius = self._tvp_data["obj_{}_r".format(obj_i)][0]
+
+        self.viewer["axes"]["trajectory"].relim()
+        self.viewer["axes"]["trajectory"].autoscale_view()
+
+        if show:
+            self.viewer["fig"].show()
+
+    def _get_p_values(self, t):
+        self._p_template = super()._get_p_values(t)
+        self._p_template["_p", 0, "goal_x"] = self.goal_x
+        self._p_template["_p", 0, "goal_y"] = self.goal_y
         return self._p_template
 
 

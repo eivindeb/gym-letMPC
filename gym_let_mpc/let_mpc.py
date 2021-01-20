@@ -3,7 +3,7 @@ from gym.utils import seeding
 import numpy as np
 import json
 from gym_let_mpc.simulator import ControlSystem
-from gym_let_mpc.controllers import ETMPC, AHMPC, mpc_get_aux_value
+from gym_let_mpc.controllers import ETMPC, AHMPC, TTAHMPC, mpc_get_aux_value
 import collections.abc
 import matplotlib.pyplot as plt
 from gym_let_mpc.utils import str_replace_whole_words
@@ -41,10 +41,19 @@ class LetMPCEnv(gym.Env):
                    config["environment"]["action"]["variables"][0]["name"] == "mpc_compute"
             controller = ETMPC(config["mpc"], config["lqr"])
             self.action_space = gym.spaces.Discrete(2)
-        elif config["mpc"]["type"] == "AHMPC":
+        elif config["mpc"]["type"] in ["AHMPC", "TTAHMPC"]:
             assert len(config["environment"]["action"]["variables"]) == 1 and \
                    config["environment"]["action"]["variables"][0]["name"] == "mpc_horizon"
-            controller = AHMPC(config["mpc"])
+            if config["mpc"]["type"] == "AHMPC":
+                controller = AHMPC(config["mpc"])
+            elif config["mpc"]["type"] == "TTAHMPC":
+                controller = TTAHMPC(config["mpc"])
+                if "end_on_constraint_violation" not in config["environment"]:
+                    config["environment"]["end_on_constraint_violation"] = []
+                for obj_i in range(controller.n_objects):
+                    config["environment"]["end_on_constraint_violation"].append("obj_{}_distance".format(obj_i))
+            else:
+                raise ValueError
             self.action_space = gym.spaces.Box(low=np.array([1]), high=np.array([50]), dtype=np.float32)
         else:
             raise ValueError
@@ -144,6 +153,53 @@ class LetMPCEnv(gym.Env):
             sampled_model = update_dict_recursively(sampled_model, model)
         elif len(sampled_model) == 0:
             sampled_model = None
+
+        if self.config["mpc"]["type"] == "TTAHMPC":
+            if tvp is None:
+                tvp = {}
+            for i, comp in enumerate(["x", "y", "theta"]):
+                if comp not in sampled_state:
+                    sampled_state[comp] = 0
+
+            if sampled_reference is not None and "theta_r" in sampled_reference:
+                self.theta_r = sampled_reference.pop("theta_r")
+            else:
+                self.theta_r = self.np_random.uniform(sampled_state["theta"] - np.radians(45), sampled_state["theta"] + np.radians(45))
+
+            if sampled_reference is not None and "traj_steps" in sampled_reference:
+                self.traj_steps = sampled_reference.pop("traj_steps")
+            else:
+                self.traj_steps = self.np_random.randint(40, 80)
+            self.trajectory_goal_x = np.cos(self.theta_r) * self.traj_steps * self.control_system.controller.u_s_ref
+            self.trajectory_goal_y = np.sin(self.theta_r) * self.traj_steps * self.control_system.controller.u_s_ref
+            self.trajectory = {"x": np.linspace(sampled_state["x"], self.trajectory_goal_x, self.traj_steps),
+                               "y": np.linspace(sampled_state["y"], self.trajectory_goal_y, self.traj_steps),
+                               "u_s": np.full((self.traj_steps,), self.control_system.controller.u_s_ref)}
+            for comp in self.trajectory:
+                if "trajectory_{}".format(comp) not in tvp:
+                    tvp["trajectory_{}".format(comp)] = [{"true": [v], "forecast": []} for v in self.trajectory[comp]]
+
+            self.trajectory["n_steps"] = self.traj_steps
+            self.control_system.controller.goal_x = self.trajectory_goal_x
+            self.control_system.controller.goal_y = self.trajectory_goal_y
+
+            for obj_i in range(self.control_system.controller.n_objects):
+                if "obj_{}_{}".format(obj_i, comp) not in tvp:
+                    tvp.update({"obj_{}_{}".format(obj_i, comp): [{"forecast": [0]}] for comp in ["x", "y", "r"]})
+                    obj_r = self.np_random.uniform(self.config["mpc"]["model"]["tvps"]["obj_0_r"]["true"][0]["kw"]["low"],
+                                                                                  self.config["mpc"]["model"]["tvps"]["obj_0_r"]["true"][0]["kw"]["high"])
+                    tvp["obj_{}_r".format(obj_i)][0]["true"] = [obj_r]
+
+                    delta_x = self.np_random.uniform(-obj_r, obj_r)
+                    delta_y = self.np_random.uniform(-np.sqrt((obj_r ** 2 - delta_x ** 2)), np.sqrt(obj_r ** 2 - (delta_x ** 2)))
+                    traj_xys = np.vstack((self.trajectory["x"], self.trajectory["y"]))
+                    obj_feasible_points = [traj_i for traj_i in range(self.trajectory["n_steps"]) if
+                                           np.linalg.norm(traj_xys[:, traj_i] - traj_xys[:, 0]) > (obj_r * 1.5) + delta_x + delta_y
+                                           and np.linalg.norm(traj_xys[:, traj_i] - traj_xys[:, -1]) > (obj_r * 1.5) + delta_x + delta_y]
+                    obj_center_traj_i = self.np_random.choice(obj_feasible_points)
+                    tvp["obj_{}_x".format(obj_i)][0]["true"] = [self.trajectory["x"][obj_center_traj_i] + delta_x]
+                    tvp["obj_{}_y".format(obj_i)][0]["true"] = [self.trajectory["y"][obj_center_traj_i] + delta_y]
+
         self.control_system.reset(state=sampled_state, reference=sampled_reference, constraint=sampled_constraint,
                                   model=sampled_model, process_noise=process_noise, tvp=tvp)
         if self.config["mpc"]["type"] == "ETMPC":
@@ -177,6 +233,11 @@ class LetMPCEnv(gym.Env):
                     info["termination"] = "constraint"
                     additional_rew = -100 * (self.max_steps - self.steps_count)
                     break
+        if self.config["mpc"]["type"] == "TTAHMPC" and \
+                np.linalg.norm(np.array([self.trajectory_goal_x, self.trajectory_goal_y]) - \
+                               np.array([self.control_system.current_state["x"], self.control_system.current_state["y"]])) <= 1e-2:
+            done = True
+            info["termination"] = "goal"
 
         rew = self.get_reward(done=done, info=info)
         rew += additional_rew
@@ -210,7 +271,7 @@ class LetMPCEnv(gym.Env):
         if self.viewer is None:
             env_plots = [plot_name for plot_name, make_plot in self.config["environment"]["render"].items() if make_plot]
             if len(env_plots) > 0:
-                figure, axes = plt.subplots(self.control_system.render_n_axes + len(env_plots), sharex=True,
+                figure, axes = plt.subplots(self.control_system.render_n_axes + len(env_plots), sharex=False,
                                             figsize=(9, 16))
             self.viewer = self.control_system.render(figure=figure, axes=axes, return_viewer=True)
             for i, plot in enumerate(env_plots):
@@ -381,6 +442,8 @@ class LetMPCEnv(gym.Env):
             ep_dict = {"state": self.sample_state(), "reference": self.sample_reference(),
                             "constraint": self.sample_constraints(), "model": self.sample_model(),
                        "process_noise": {}, "tvp": {}}
+            if self.config["mpc"]["type"] == "TTAHMPC":
+                ep_dict["reference"].update({"theta_r": self.theta_r, "traj_steps": self.traj_steps})
             s_i = 0
             for s_name, s_props in self.config["plant"]["model"]["states"].items():
                 if "W" in s_props:
@@ -447,6 +510,7 @@ if __name__ == "__main__":  # TODO: constraints on pendulum and end episode if c
         for k, v in rews.items():
             print("{}: {}".format(k, sum(v)))
         print("Elapsed time {}".format(time.process_time() - t_before))
+        print("Termination: {}".format(info["termination"]))
         env.render()
 
 
