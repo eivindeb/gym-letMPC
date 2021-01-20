@@ -656,7 +656,7 @@ class AHMPC(LMPC):
         if "nlpsol_opts" not in mpc_config:
             mpc_config["nlpsol_opts"] = {}
 
-        mpc_config["nlpsol_opts"]["ipopt.max_iter"] = 100
+        mpc_config["nlpsol_opts"]["ipopt.max_iter"] = 200
         for state in mpc_config["model"]["states"].values():
             state["rhs"] = "({}) * (1 - hend)".format(state["rhs"])
 
