@@ -715,9 +715,9 @@ class AHMPC(LMPC):
 
     def _get_p_values(self, t):
         if len(self.history["mpc_horizon"]) == 0:
-            self._p_template["_p", 0] = self.mpc_config["params"]["n_horizon"]
+            self._p_template["_p", 0, "n_horizon"] = self.mpc_config["params"]["n_horizon"]
         else:
-            self._p_template["_p", 0] = self.history["mpc_horizon"][-1]
+            self._p_template["_p", 0, "n_horizon"] = self.history["mpc_horizon"][-1]
 
         return self._p_template
 
