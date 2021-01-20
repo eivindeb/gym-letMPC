@@ -3,7 +3,7 @@ from gym.utils import seeding
 import numpy as np
 import json
 from gym_let_mpc.simulator import ControlSystem
-from gym_let_mpc.controllers import ETMPC, AHMPC
+from gym_let_mpc.controllers import ETMPC, AHMPC, mpc_get_aux_value
 import collections.abc
 import matplotlib.pyplot as plt
 from gym_let_mpc.utils import str_replace_whole_words
@@ -314,6 +314,8 @@ class LetMPCEnv(gym.Env):
                 val = self.config[var["value_type"]]["model"]["parameters"][var["name"]]
             else:
                 raise ValueError
+        elif var["type"] == "aux":
+            val = mpc_get_aux_value(self.control_system.controller.mpc, var["name"])
         else:
             raise ValueError
 

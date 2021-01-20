@@ -49,19 +49,22 @@ def mpc_set_objective(mpc, cost_parameters, reference=None, parameters=None, val
     for cost_term in costs.keys():
         if cost_term in cost_parameters:
             expr = cost_parameters[cost_term]["expression"]
-            for var in sorted(cost_parameters[cost_term]["variables"], key=lambda x: len(x["name"]), reverse=True):
-                if var["type"] in ["_x", "_u", "_tvp"]:
-                    expr = str_replace_whole_words(expr, var["name"], 'mpc.model.{}["{}"]'.format(var["type"][1:], var["name"]))
-                elif var["type"] == "_r":
-                    assert reference is not None and var["name"] in reference
-                    expr = str_replace_whole_words(expr, var["name"], reference[var["name"]]["value"])
-                elif var["type"] == "parameter":
-                    assert parameters is not None and var["name"] in parameters
-                    expr = str_replace_whole_words(expr, var["name"], parameters[var["name"]])
-                else:
-                    raise ValueError
+            if expr == "0":
+                costs[cost_term] = np.array([[0]])
+            else:
+                for var in sorted(cost_parameters[cost_term]["variables"], key=lambda x: len(x["name"]), reverse=True):
+                    if var["type"] in ["_x", "_u", "_tvp", "_p", "_aux"]:
+                        expr = str_replace_whole_words(expr, var["name"], 'mpc.model.{}["{}"]'.format(var["type"][1:], var["name"]))
+                    elif var["type"] == "_r":
+                        assert reference is not None and var["name"] in reference
+                        expr = str_replace_whole_words(expr, var["name"], reference[var["name"]]["value"])
+                    elif var["type"] == "parameter":
+                        assert parameters is not None and var["name"] in parameters
+                        expr = str_replace_whole_words(expr, var["name"], parameters[var["name"]])
+                    else:
+                        raise ValueError
 
-            costs[cost_term] = eval(expr)
+                costs[cost_term] = eval(expr)
 
     if value_function is not None:
         costs["mterm"] = value_function
@@ -128,6 +131,11 @@ def mpc_get_solution(mpc, states=None, inputs=None, t_ind=-1):  # TODO: need to 
             return input_sequences
 
     return state_preds, input_sequences
+
+
+def mpc_get_aux_value(mpc, aux_name, h_idx=0):
+    aux_idx = mpc.model["_aux"].labels().index("[{},0]".format(aux_name))
+    return mpc.opt_aux_num["_aux", 0, h_idx][aux_idx].__float__()
 
 
 class LQR:

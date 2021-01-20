@@ -1,6 +1,7 @@
 import do_mpc
 import numpy as np
 from gym_let_mpc.utils import str_replace_whole_words
+import casadi
 
 
 def mpc_model_get_variable_names(model, var_type):  # TODO: find out why default control input state is inserted
@@ -8,6 +9,26 @@ def mpc_model_get_variable_names(model, var_type):  # TODO: find out why default
 
 
 def initialize_mpc_model(config):
+    def evaluate_expression(expression):
+        state_names, input_names, tvp_names, aux_names, p_names = list(states.keys()), list(inputs.keys()), list(tvps.keys()), list(auxs.keys()), list(ps.keys())
+        param_names = list(config.get("parameters", {}).keys())
+        var_names = state_names + input_names + param_names + tvp_names + aux_names + p_names
+
+        for var_name in var_names:
+            if var_name in state_names:
+                expression = str_replace_whole_words(expression, var_name, 'states["{}"]'.format(var_name))
+            elif var_name in input_names:
+                expression = str_replace_whole_words(expression, var_name, 'inputs["{}"]'.format(var_name))
+            elif var_name in tvp_names:
+                expression = str_replace_whole_words(expression, var_name, 'tvps["{}"]'.format(var_name))
+            elif var_name in aux_names:
+                expression = str_replace_whole_words(expression, var_name, 'auxs["{}"]'.format(var_name))
+            elif var_name in p_names:
+                expression = str_replace_whole_words(expression, var_name, 'ps["{}"]'.format(var_name))
+            else:
+                expression = str_replace_whole_words(expression, var_name, config["parameters"][var_name])
+
+        return eval(expression)
     if isinstance(config, str):
         raise NotImplementedError
     elif not isinstance(config, dict):
@@ -18,6 +39,7 @@ def initialize_mpc_model(config):
     inputs = {}
     tvps = {}
     ps = {}
+    auxs = {}
     for state_name in sorted(config["states"]):
         states[state_name] = model.set_variable(var_type="_x", var_name=state_name, shape=(1, 1))
 
@@ -30,6 +52,9 @@ def initialize_mpc_model(config):
     for p_name in sorted(config.get("ps", {})):
         ps[p_name] = model.set_variable(var_type="_p", var_name=p_name, shape=(1, 1))
 
+    for aux_name in sorted(config.get("auxs", {})):
+        auxs[aux_name] = model.set_expression(aux_name, evaluate_expression(config["auxs"][aux_name]["expression"]))
+
     if config["class"] == "linear":
         for state_name, state_props in config["states"].items():
             model.set_rhs(state_name,
@@ -41,17 +66,7 @@ def initialize_mpc_model(config):
         param_names = list(config.get("parameters", {}).keys())
         var_names = state_names + input_names + param_names + tvp_names
         for state_name, state_props in sorted(config["states"].items(), key=lambda x: len(x[0]), reverse=True):
-            rhs_expr = state_props["rhs"]
-            for var_name in var_names:
-                if var_name in state_names:
-                    rhs_expr = str_replace_whole_words(rhs_expr, var_name, 'states["{}"]'.format(var_name))
-                elif var_name in input_names:
-                    rhs_expr = str_replace_whole_words(rhs_expr, var_name, 'inputs["{}"]'.format(var_name))
-                elif var_name in tvp_names:
-                    rhs_expr = str_replace_whole_words(rhs_expr, var_name, 'tvps["{}"]'.format(var_name))
-                else:
-                    rhs_expr = str_replace_whole_words(rhs_expr, var_name, config["parameters"][var_name])
-            model.set_rhs(state_name, eval(rhs_expr), process_noise="W" in state_props)
+            model.set_rhs(state_name, evaluate_expression(state_props["rhs"]), process_noise="W" in state_props)
     else:
         raise NotImplementedError
 

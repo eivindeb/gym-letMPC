@@ -1,5 +1,6 @@
 import do_mpc
 import matplotlib.pyplot as plt
+from gym_let_mpc.controllers import mpc_get_aux_value
 from gym_let_mpc.model import mpc_model_get_variable_names, initialize_mpc_model
 from gym_let_mpc.utils import OrnsteinUhlenbeckProcess
 import copy
@@ -294,14 +295,17 @@ class ControlSystem:
         if hasattr(self.controller, "constraints"):
             for c_name, constraint in self.controller.constraints.items():
                 if constraint_names == "all" or c_name in constraint_names:
-                    if constraint["var_type"] == "_x":
-                        constraint_distance = constraint["value"] - self.current_state[constraint["var_name"]]
-                    elif constraint["var_type"] == "_u":
-                        constraint_distance = constraint["value"] - self.controller.current_input[constraint["var_name"]]
+                    if constraint.get("aux", False):
+                        constraint_distance = mpc_get_aux_value(self.controller.mpc, c_name.split("-")[1])
                     else:
-                        raise ValueError
-                    if constraint["constraint_type"] == "upper":
-                        constraint_distance *= -1
+                        if constraint["type"] == "_x":
+                            constraint_distance = constraint["value"] - self.current_state[constraint["name"]]
+                        elif constraint["type"] == "_u":
+                            constraint_distance = constraint["value"] - self.controller.current_input[constraint["name"]]
+                        else:
+                            raise ValueError
+                        if constraint["constraint_type"] == "upper":
+                            constraint_distance *= -1
                     constraint_distances[c_name] = constraint_distance
 
         return constraint_distances
