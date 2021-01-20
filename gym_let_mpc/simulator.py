@@ -40,6 +40,7 @@ class TVP:
             for component in props:
                 self.generators[prop_name].append({"redraw_probability": component.get("redraw_probability", 1),
                                                 "forecast_aware": component.get("forecast_aware", True),
+                                                "starts_at": component.get("starts_at", 0),
                                                 "distribution": self.create_generator(component["type"], component["kw"])})
 
     def reset(self):
@@ -80,7 +81,7 @@ class TVP:
         else:
             return [sum([self.values[t if self.generators["true"][gen_i]["forecast_aware"] else t_start]["true"][gen_i]
                          for gen_i in range(len(self.generators["true"]))])
-                    + sum(self.values[t]["forecast"]) *
+                    + sum([v if t >= self.generators["forecast"][f_i].get("starts_at", 0) else 0 for f_i, v in enumerate(self.values[t]["forecast"])]) *
                     (min(t_end - t_start, (t - t_start) * 2)) / (t_end - t_start) * (1 if with_noise else 0)
                     for t in range(t_start, t_end)]
 
