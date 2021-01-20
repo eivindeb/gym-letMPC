@@ -211,6 +211,7 @@ class LetMPCEnv(gym.Env):
         return obs
 
     def step(self, action):
+        assert not np.any(np.isnan(action))
         a_dict = {a_props["name"]: action[a_i]
                                         for a_i, a_props in enumerate(self.config["environment"]["action"]["variables"])}
 
