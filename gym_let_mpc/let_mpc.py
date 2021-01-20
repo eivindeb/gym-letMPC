@@ -468,8 +468,8 @@ class LetMPCEnv(gym.Env):
 
 
 if __name__ == "__main__":  # TODO: constraints on pendulum and end episode if constraints violated
-    env = LetMPCEnv("configs/cart_pendulum_horizon.json")
-    env.seed(0)
+    env = LetMPCEnv("configs/cart_pendulum_horizon.json")#"../../lmpc-horizon/configs/unicycle_ca_horizon.json")
+    env.seed(5)
 
     """
     from tensorflow_casadi import TensorFlowEvaluator, MLP
@@ -480,9 +480,10 @@ if __name__ == "__main__":  # TODO: constraints on pendulum and end episode if c
     val_fun = TensorFlowEvaluator([mlp.input_ph], [mlp.output], sess)
     env.set_value_function(mlp.input_ph, mlp.output, sess)
     """
+    test_set_path = "../../lmpc-horizon/datasets/cart_pendulum_10.pkl"#"../../lmpc-horizon/datasets/unicycle_ca_5.pkl"
 
     import pickle
-    with open("../../lmpc-horizon/datasets/cart_pendulum_10.pkl", "rb") as f:
+    with open(test_set_path, "rb") as f:
         test_set = pickle.load(f)
 
     rews = {}
@@ -490,10 +491,12 @@ if __name__ == "__main__":  # TODO: constraints on pendulum and end episode if c
     for i in range(1):
         import time
         obs = env.reset(**test_set[5])
+        #obs = env.reset(state={"pos": 0, "omega": -1, "theta": -0.53, "v": 0})
+        #obs = env.reset()
 
         done = False
         t_before = time.process_time()
-        horizon = 10
+        horizon = 15
         while not done:
             t_step = time.process_time()
             if env.steps_count % 1 == 0 and False:
