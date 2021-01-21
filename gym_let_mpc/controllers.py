@@ -146,7 +146,7 @@ def mpc_get_solution(mpc, states=None, inputs=None, t_ind=-1):  # TODO: need to 
 
 def mpc_get_aux_value(mpc, aux_name, h_idx=0):
     aux_idx = mpc.model["_aux"].labels().index("[{},0]".format(aux_name))
-    return mpc.opt_aux_num["_aux", 0, h_idx][aux_idx].__float__()
+    return mpc.opt_aux_num["_aux", h_idx, 0][aux_idx].__float__()
 
 
 class LQR:
