@@ -2,7 +2,6 @@ import numpy as np
 import re
 import tensorflow as tf
 import casadi
-from multiprocessing.managers import BaseManager
 
 
 def str_replace_whole_words(string, pattern, replace_with):
@@ -148,9 +147,3 @@ class TensorFlowEvaluator(casadi.Callback):
         if len(self.refs) > 0:
             for ref in self.refs:
                 ref.set_enabled(status)
-
-
-class TensorFlowEvaluatorManager(BaseManager):
-    pass
-
-TensorFlowEvaluatorManager.register("TensorFlowEvaluator", TensorFlowEvaluator)
