@@ -96,6 +96,8 @@ class LetMPCEnv(gym.Env):
                                                 dtype=np.float32)
 
         self.value_function_is_set = False
+        self.mpc_value_function_args = None
+        self.mpc_value_function_learning_status = False
 
         self.viewer = None
 
@@ -249,13 +251,14 @@ class LetMPCEnv(gym.Env):
             else:
                 raise NotImplementedError
 
-        if self.value_function_is_set:
-            step_vf_data = {"mpc_state": self.control_system.get_state_vector(self.control_system.history["state"][-2]),
-                            "mpc_next_state": self.control_system.controller.mpc_state_preds[:, -1, -1]}
+        if self.mpc_value_function_args is not None:
+            mpc = self.control_system.controller.mpc
+            step_vf_data = {"mpc_state": mpc.opt_p_num["_x0"].toarray().ravel(),
+                            "mpc_next_state": mpc.opt_x_num_unscaled['_x', -1, 0, -1].toarray().ravel(),
+                            "mpc_parameter": mpc.opt_p_num["_p", 0].toarray().ravel()}
             step_vf_data["mpc_n_horizon"] = self.control_system.controller.history["mpc_horizon"][-1]
-            info["mpc_value_fn"] = (self.control_system.controller.value_function.eval([step_vf_data["mpc_next_state"].reshape(1, -1)])[0][0, 0]).astype(np.float64)
-            step_vf_data["mpc_rewards"] = self.control_system.controller.mpc.opt_f_num.toarray()[0, 0] - \
-                                          self.config["mpc"]["objective"].get("discount_factor") ** (step_vf_data["mpc_n_horizon"] + 1) * info["mpc_value_fn"]
+            step_vf_data["mpc_rewards"] = mpc.opt_f_num_no_term.__float__()
+            info["mpc_value_fn"] = self.control_system.controller.mpc.mterm_fun(step_vf_data["mpc_next_state"], step_vf_data["mpc_parameter"]).__float__()
             info["mpc_computation_time"] = sum([v for k, v in self.control_system.controller.mpc.solver_stats.items() if k.startswith("t_proc")])
             info["data"] = step_vf_data
             info["mpc_avg_stage_cost"] = step_vf_data["mpc_rewards"] / step_vf_data["mpc_n_horizon"]
@@ -458,12 +461,17 @@ class LetMPCEnv(gym.Env):
 
         return dataset
 
-    def set_value_function(self, input_ph, output_ph, tf_session):
-        self.control_system.controller.set_value_function(input_ph, output_ph, tf_session)
-        self.value_function_is_set = True
+    def set_value_function(self, input_phs, output_ph, tf_session):
+        if self.mpc_value_function_learning_status:
+            self.control_system.controller.set_value_function(input_phs, output_ph, tf_session)
+            self.value_function_is_set = True
+        else:
+            self.mpc_value_function_args = (input_phs, output_ph, tf_session)
 
     def set_learning_status(self, status):
-        if self.value_function_is_set:
+        self.mpc_value_function_learning_status = status
+        if status and not self.value_function_is_set:
+            self.set_value_function(*self.mpc_value_function_args)
             self.control_system.controller.value_function.set_enabled(status)
 
 

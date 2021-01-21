@@ -510,14 +510,10 @@ class LMPC:
         if self.viewer is not None and "mpc_graphics" in self.viewer:
             self.viewer["mpc_graphics"].data = self.mpc.data
 
-    def set_value_function(self, input_ph, output_ph, tf_session):
-        self.value_function = TensorFlowEvaluator([input_ph], [output_ph], tf_session)
+    def set_value_function(self, input_phs, output_ph, tf_session):
+        assert (isinstance(input_phs, list) or isinstance(input_phs, tuple)) and len(input_phs) == 2
+        self.value_function = TensorFlowEvaluator(input_phs, [output_ph], tf_session)
         self._initialize_mpc(mpc_model=self.mpc.model)
-
-
-
-
-    # TODO: add support for changing Q and R in MPC and LQR
 
 
 class ETMPC(LMPC):
