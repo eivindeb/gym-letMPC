@@ -259,9 +259,10 @@ class LetMPCEnv(gym.Env):
             step_vf_data["mpc_n_horizon"] = self.control_system.controller.history["mpc_horizon"][-1]
             step_vf_data["mpc_rewards"] = mpc.opt_f_num_no_term.__float__()
             info["mpc_value_fn"] = self.control_system.controller.mpc.mterm_fun(step_vf_data["mpc_next_state"], step_vf_data["mpc_parameter"]).__float__()
-            info["mpc_computation_time"] = sum([v for k, v in self.control_system.controller.mpc.solver_stats.items() if k.startswith("t_proc")])
             info["data"] = step_vf_data
             info["mpc_avg_stage_cost"] = step_vf_data["mpc_rewards"] / step_vf_data["mpc_n_horizon"]
+
+        info["mpc_computation_time"] = sum([v for k, v in self.control_system.controller.mpc.solver_stats.items() if k.startswith("t_proc")])
 
         info.update({k: v.astype(np.float64) if hasattr(v, "dtype") else v for k, v in a_dict.items()})
 
