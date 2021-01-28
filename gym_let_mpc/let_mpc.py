@@ -236,8 +236,11 @@ class LetMPCEnv(gym.Env):
                         c_name.split("-")[1] in self.config["environment"]["end_on_constraint_violation"] and c_d > 0:
                     done = True
                     info["termination"] = "constraint"
-                    additional_rew = -100 * (self.max_steps - self.steps_count)
+                    additional_rew = -10 * (self.max_steps - self.steps_count)
+                    info["reward/constraint"] = additional_rew
                     break
+        if info.get("termination", None) != "constraint":
+            info["reward/constraint"] = 0
         if self.config["mpc"]["type"] == "TTAHMPC" and \
                 np.linalg.norm(np.array([self.trajectory_goal_x, self.trajectory_goal_y]) - \
                                np.array([self.control_system.current_state["x"], self.control_system.current_state["y"]])) <= 1e-2:
