@@ -132,7 +132,7 @@ class TensorFlowEvaluator(casadi.Callback):
             # Construct the reverse tensorflow graph through 'gradients'
             grad = tf.gradients(self.t_out, self.t_in, grad_ys=adj_seed)
             # Create another TensorFlowEvaluator object
-            callback = TensorFlowEvaluator(self.t_in+adj_seed, grad, self.session)
+            callback = TensorFlowEvaluator(self.t_in+adj_seed, grad, self.session, opts)
             # Make sure you keep a reference to it
             self.refs.append(callback)
 
