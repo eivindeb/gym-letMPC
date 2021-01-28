@@ -206,6 +206,8 @@ class LetMPCEnv(gym.Env):
                                   model=sampled_model, process_noise=process_noise, tvp=tvp)
         if self.config["mpc"]["type"] == "ETMPC":
             self.control_system.step(action=np.array([1]))
+        elif self.config["mpc"]["type"] in ["AHMPC", "TTAHMPC"]:
+            self.control_system.step(action=np.array(self.config["mpc"]["params"]["n_horizon"]))
         obs = self.get_observation()
         self.history = {"obs": [obs], "actions": [], "rewards": []}
         self.steps_count = 0
