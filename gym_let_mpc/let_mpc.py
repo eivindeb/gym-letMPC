@@ -256,19 +256,24 @@ class LetMPCEnv(gym.Env):
             else:
                 raise NotImplementedError
 
-        if self.mpc_value_function_args is not None:
+        #info.update(a_dict)
+
+        if self.mpc_value_function_args is not None or True:
             mpc = self.control_system.controller.mpc
             step_vf_data = {"mpc_state": mpc.opt_p_num["_x0"].toarray().ravel(),
-                            "mpc_next_state": mpc.opt_x_num_unscaled['_x', -1, 0, -1].toarray().ravel(),
+                            "mpc_next_state": self.control_system.get_state_vector(self.control_system.current_state),
                             "mpc_parameter": mpc.opt_p_num["_p", 0].toarray().ravel()}
             step_vf_data["mpc_n_horizon"] = self.control_system.controller.history["mpc_horizon"][-1]
-            step_vf_data["mpc_rewards"] = mpc.opt_f_num_no_term.__float__()
-            info["mpc_value_fn"] = self.control_system.controller.mpc.mterm_fun(step_vf_data["mpc_next_state"], step_vf_data["mpc_parameter"]).__float__()
+            step_vf_data["mpc_rewards"] = mpc.lterm_fun(step_vf_data["mpc_next_state"],
+                                                        mpc.opt_x_num_unscaled["_u", 0, 0],
+                                                        mpc.opt_x_num_unscaled["_z", 0, 0, -1],
+                                                        mpc.opt_p_num["_tvp", 0],
+                                                        mpc.opt_p_num["_p", 0]).__float__()
+            info["mpc_value_fn"] = mpc.mterm_fun(step_vf_data["mpc_next_state"], step_vf_data["mpc_parameter"]).__float__()
             info["data"] = step_vf_data
             info["mpc_avg_stage_cost"] = step_vf_data["mpc_rewards"] / step_vf_data["mpc_n_horizon"]
 
         info["mpc_computation_time"] = sum([v for k, v in self.control_system.controller.mpc.solver_stats.items() if k.startswith("t_proc")])
-        info.update(a_dict)
 
         info.update({k: v.astype(np.float64) if hasattr(v, "dtype") else v for k, v in a_dict.items()})
 
