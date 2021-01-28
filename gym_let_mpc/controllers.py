@@ -88,7 +88,11 @@ def mpc_set_constraints(mpc, constraints):
                                                    'mpc.model.{}["{}"]'.format(var["type"][1:], var["name"]))
                 else:
                     raise ValueError
-            mpc.set_nl_cons(c["name"], eval(expr), ub=c["value"], soft_constraint=c.get("soft", False), penalty_term_cons=c["cost"])
+            expr_name = c["name"]
+            eps_names = [s["expr_name"] for s in mpc.nl_cons_list]
+            while expr_name in eps_names:
+                expr_name += "1"
+            mpc.set_nl_cons(expr_name, eval(expr), ub=c["value"], soft_constraint=c.get("soft", False), penalty_term_cons=c["cost"])
         else:
             if c.get("soft", False):  # TODO: support for arbitrary expressions
                 if c["type"] == "_x":
@@ -658,6 +662,22 @@ class AHMPC(LMPC):
 
         mpc_config["objective"]["lterm"]["expression"] = "({}) * (1 - hend)".format(mpc_config["objective"]["lterm"]["expression"])
         mpc_config["objective"]["lterm"]["variables"].append({"name": "hend", "type": "_tvp"})
+        for input_name in mpc_config["model"]["inputs"]:
+            mpc_config["objective"]["lterm"]["variables"].append({"name": input_name, "type": "_u"})
+            mpc_config["objective"]["lterm"]["expression"] += " + hend * ({}) ** 2".format(input_name)
+
+        for constraint in mpc_config["constraints"]:
+            if constraint.get("soft", False):
+                if "expression" in constraint:
+                    constraint["expression"] = "({}) * (1 - hend)".format(constraint["expression"])
+                    constraint["variables"].append({"name": "hend", "type": "_tvp"})
+                else:
+                    constraint["variables"] = [{"name": "hend", "type": "_tvp"},
+                                                {"name": constraint["name"], "type": constraint["type"]}]
+                    constraint["expression"] = "({}) * (1 - hend)".format(constraint["name"])
+                    if constraint.get("constraint_type", "upper") == "lower":
+                        constraint["value"] *= -1
+                        constraint["expression"] = "-" + constraint["expression"]
 
         if "tvps" not in mpc_config["model"]:
             mpc_config["model"]["tvps"] = {}
