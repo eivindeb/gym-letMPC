@@ -282,7 +282,9 @@ class LMPC:
         elif self.tvp_props is not None:
             self._tvp_data = {name: None for name in self.tvp_props}
 
-        #self.mpc.set_initial_guess()
+        self.mpc.set_initial_guess()
+        #self.mpc.set_initial_p_num()
+        #self.mpc.calculate_aux_num()
 
         self.current_input = {u_name: None for u_name in self.input_names}
         self.history = {"inputs": [self.current_input], "references": [self.current_reference],
