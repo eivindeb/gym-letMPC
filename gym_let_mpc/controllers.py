@@ -761,7 +761,7 @@ class TTAHMPC(AHMPC):
         if self.n_objects > 0:
             if "auxs" not in mpc_config["model"]:
                 mpc_config["model"]["auxs"] = {}
-            data = {"low": 0.1, "high": 1, "sigma": 0.05, "theta": 0.75}
+            data = {"low": 0.25, "high": 1, "sigma": 0.05, "theta": 0.75}
             for obj_i in range(self.n_objects):
                 for comp in ["x", "y", "r"]:
                     mpc_config["model"]["tvps"]["obj_{}_{}".format(obj_i, comp)] = {"true": [
@@ -777,7 +777,7 @@ class TTAHMPC(AHMPC):
                       ],
                       "forecast": [
                         {
-                          "starts_at": 15,
+                          "starts_at": 5,
                           "type": "OU",
                           "kw": {
                             "mean": 0,
