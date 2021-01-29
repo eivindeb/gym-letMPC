@@ -3,7 +3,7 @@ from gym.utils import seeding
 import numpy as np
 import json
 from gym_let_mpc.simulator import ControlSystem
-from gym_let_mpc.controllers import ETMPC, AHMPC, TTAHMPC, mpc_get_aux_value
+from gym_let_mpc.controllers import ETMPC, AHMPC, TTAHMPC, mpc_get_aux_value, mpc_get_algstate_value
 import collections.abc
 import matplotlib.pyplot as plt
 from gym_let_mpc.utils import str_replace_whole_words
@@ -359,6 +359,8 @@ class LetMPCEnv(gym.Env):
                       self.control_system.controller.current_input[var["name"]]
             else:
                 raise ValueError
+        elif var["type"] == "algstate":
+            val = mpc_get_algstate_value(self.control_system.controller.mpc, var["name"])
         elif var["type"] == "reference":
             val = self.control_system.controller.current_reference[var["name"]]
         elif var["type"] == "tvp":

@@ -153,6 +153,11 @@ def mpc_get_aux_value(mpc, aux_name, h_idx=0):
     return mpc.opt_aux_num["_aux", h_idx, 0][aux_idx].__float__()
 
 
+def mpc_get_algstate_value(mpc, algstate_name, h_idx=0):
+    z_idx = mpc.model["_z"].labels().index("[{},0]".format(algstate_name))
+    return mpc.opt_x_num_unscaled["_z", h_idx, 0, 0][z_idx].__float__()
+
+
 class LQR:
     def __init__(self, A, B, Q, R, JA=None, JB=None):
         self.A, self.B, self.Q, self.R, self.JA, self.JB = A, B, Q, R, JA, JB

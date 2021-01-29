@@ -10,9 +10,9 @@ def mpc_model_get_variable_names(model, var_type):  # TODO: find out why default
 
 def initialize_mpc_model(config):
     def evaluate_expression(expression):
-        state_names, input_names, tvp_names, aux_names, p_names = list(states.keys()), list(inputs.keys()), list(tvps.keys()), list(auxs.keys()), list(ps.keys())
+        state_names, input_names, tvp_names, aux_names, p_names, z_names = list(states.keys()), list(inputs.keys()), list(tvps.keys()), list(auxs.keys()), list(ps.keys()), list(zs.keys())
         param_names = list(config.get("parameters", {}).keys())
-        var_names = state_names + input_names + param_names + tvp_names + aux_names + p_names
+        var_names = state_names + input_names + param_names + tvp_names + aux_names + p_names + z_names
 
         for var_name in var_names:
             if var_name in state_names:
@@ -25,6 +25,8 @@ def initialize_mpc_model(config):
                 expression = str_replace_whole_words(expression, var_name, 'auxs["{}"]'.format(var_name))
             elif var_name in p_names:
                 expression = str_replace_whole_words(expression, var_name, 'ps["{}"]'.format(var_name))
+            elif var_name in z_names:
+                expression = str_replace_whole_words(expression, var_name, 'zs["{}"]'.format(var_name))
             else:
                 expression = str_replace_whole_words(expression, var_name, config["parameters"][var_name])
 
@@ -34,12 +36,20 @@ def initialize_mpc_model(config):
     elif not isinstance(config, dict):
         raise ValueError
 
+    for p_name, p_val in config.get("parameters", {}).items():
+        if isinstance(p_val, str):
+            for _p_name, _p_val in config["parameters"].items():
+                p_val = str_replace_whole_words(p_val, _p_name, _p_val)
+            config["parameters"][p_name] = eval(p_val)
+
+
     model = do_mpc.model.Model(config["type"])
     states = {}
     inputs = {}
     tvps = {}
     ps = {}
     auxs = {}
+    zs = {}
     for state_name in sorted(config["states"]):
         states[state_name] = model.set_variable(var_type="_x", var_name=state_name, shape=(1, 1))
 
@@ -52,8 +62,23 @@ def initialize_mpc_model(config):
     for p_name in sorted(config.get("ps", {})):
         ps[p_name] = model.set_variable(var_type="_p", var_name=p_name, shape=(1, 1))
 
+    for z_name in sorted(config.get("zs", {})):
+        zs[z_name] = model.set_variable(var_type="_z", var_name=z_name, shape=(1, 1))
+
     for aux_name in sorted(config.get("auxs", {})):
         auxs[aux_name] = model.set_expression(aux_name, evaluate_expression(config["auxs"][aux_name]["expression"]))
+
+    for dae_name in sorted(config.get("dae", {})):
+        expr = config["dae"][dae_name]
+        if isinstance(expr, list):
+            for i in range(len(expr)):
+                expr[i] = evaluate_expression(expr[i])
+            expr = casadi.vertcat(*expr)
+        else:
+            expr = evaluate_expression(expr)
+        model.set_alg(dae_name, expr)
+
+
 
     if config["class"] == "linear":
         for state_name, state_props in config["states"].items():
