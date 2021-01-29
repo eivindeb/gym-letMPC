@@ -232,7 +232,7 @@ class LMPC:
         self.reference_names = sorted(mpc_config.get("reference", {}).keys())
 
         self.current_input = {u_name: 0 for u_name in self.input_names}
-        self.current_reference = {r_name: mpc_config["reference"][r_name]["value"] for r_name in
+        self.current_reference = {r_name: 0 for r_name in
                                   self.reference_names}
 
         self._initialize_mpc(mpc_model=mpc_model)
@@ -713,6 +713,9 @@ class AHMPC(LMPC):
         state_vec = self._get_state_vector(state)
         if n_horizon < self.mpc_config["params"]["n_horizon"]:
             tvp_values["hend"][n_horizon:] = [1.0] * (self.mpc_config["params"]["n_horizon"] - n_horizon)
+
+        for ref_name in self.current_reference:
+            self.current_reference[ref_name] = tvp_values[ref_name][0]
 
         self.history["mpc_horizon"].append(n_horizon)
 
