@@ -186,7 +186,7 @@ class LetMPCEnv(gym.Env):
             self.control_system.controller.goal_y = self.trajectory_goal_y
 
             for obj_i in range(self.control_system.controller.n_objects):
-                if "obj_{}_{}".format(obj_i, comp) not in tvp:
+                if "obj_{}_r".format(obj_i) not in tvp:
                     tvp.update({"obj_{}_{}".format(obj_i, comp): [{"forecast": [0]}] for comp in ["x", "y", "r"]})
                     obj_r = self.np_random.uniform(self.config["mpc"]["model"]["tvps"]["obj_0_r"]["true"][0]["kw"]["low"],
                                                                                   self.config["mpc"]["model"]["tvps"]["obj_0_r"]["true"][0]["kw"]["high"])
