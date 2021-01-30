@@ -68,7 +68,7 @@ class TVP:
             for gen_type in ["true", "forecast"]:
                 if gen_type in self.generators:
                     for comp_i, component in enumerate(self.generators[gen_type]):
-                        if len(self.values) == 0 or self.np_random.uniform() <= component["redraw_probability"]:
+                        if len(self.values) == 0 or len(self.values) % int(1 / component["redraw_probability"]) == 0:#self.np_random.uniform() <= component["redraw_probability"]:
                             step_val[gen_type].append(component["distribution"]())
                         else:
                             step_val[gen_type].append(self.values[-1][gen_type][comp_i])
