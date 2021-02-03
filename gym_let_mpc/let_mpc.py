@@ -6,14 +6,24 @@ from gym_let_mpc.simulator import ControlSystem
 from gym_let_mpc.controllers import ETMPC, AHMPC, TTAHMPC, mpc_get_aux_value, mpc_get_algstate_value
 import collections.abc
 import matplotlib.pyplot as plt
-from gym_let_mpc.utils import str_replace_whole_words
+from gym_let_mpc.utils import str_replace_whole_words, casadiNNVF
 import copy
 
 
 class LetMPCEnv(gym.Env):
-    def __init__(self, config_path):
+    def __init__(self, config_path, config_kw=None):
+        def set_config_attrs(parent, kws):
+            for attr, val in kws.items():
+                if isinstance(val, dict) or isinstance(parent[attr], list):
+                    set_config_attrs(parent[attr], val)
+                else:
+                    parent[attr] = val
+
         with open(config_path) as file_object:
             config = json.load(file_object)
+
+        if config_kw is not None:
+            set_config_attrs(config, config_kw)
 
         if config["mpc"]["model"] == "plant":
             config["mpc"]["model"] = copy.deepcopy(config["plant"]["model"])
