@@ -249,7 +249,7 @@ class LetMPCEnv(gym.Env):
                     done = True
                     info["termination"] = "constraint"
                     additional_rew = self.config["environment"]["reward"].get("termination_weight", -1) * (self.max_steps - self.steps_count)
-                    info["reward/constraint"] = additional_rew
+                    info["reward/constraint"] = -additional_rew
                     break
         if info.get("termination", None) != "constraint":
             info["reward/constraint"] = 0
