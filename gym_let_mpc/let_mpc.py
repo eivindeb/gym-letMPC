@@ -95,10 +95,6 @@ class LetMPCEnv(gym.Env):
                                                 high=np.array(obs_high, dtype=np.float32),
                                                 dtype=np.float32)
 
-        self.value_function_is_set = False
-        self.mpc_value_function_args = None
-        self.mpc_value_function_learning_status = False
-
         self.viewer = None
 
     def seed(self, seed=None):
@@ -258,20 +254,34 @@ class LetMPCEnv(gym.Env):
 
         #info.update(a_dict)
 
-        if self.mpc_value_function_args is not None or True:
+        if self.control_system.controller.mpc_config["objective"].get("vf", None) is not None:
             mpc = self.control_system.controller.mpc
             step_vf_data = {"mpc_state": mpc.opt_p_num["_x0"].toarray().ravel(),
-                            "mpc_next_state": self.control_system.get_state_vector(self.control_system.current_state),
-                            "mpc_parameter": mpc.opt_p_num["_p", 0].toarray().ravel()}
+                            "mpc_next_state": self.control_system.get_state_vector(self.control_system.current_state)}
+            use_p_idxs = []
+            for p_i, p_l in enumerate(mpc.model._p.labels()):
+                if "n_horizon" not in p_l:
+                    use_p_idxs.append(p_i)
+            step_vf_data["mpc_parameter"] = mpc.opt_p_num["_p", 0][use_p_idxs].toarray().ravel() if len(use_p_idxs) > 0 else []
             step_vf_data["mpc_n_horizon"] = self.control_system.controller.history["mpc_horizon"][-1]
-            step_vf_data["mpc_rewards"] = mpc.lterm_fun(step_vf_data["mpc_next_state"],
-                                                        mpc.opt_x_num_unscaled["_u", 0, 0],
-                                                        mpc.opt_x_num_unscaled["_z", 0, 0, -1],
-                                                        mpc.opt_p_num["_tvp", 0],
-                                                        mpc.opt_p_num["_p", 0]).__float__()
-            info["mpc_value_fn"] = mpc.mterm_fun(step_vf_data["mpc_next_state"], step_vf_data["mpc_parameter"]).__float__()
+            if self.config["plant"]["model"].get("auxs", {}).get("energy_kinetic", None) is not None:
+                step_vf_data["mpc_rewards"] = mpc_get_aux_value(mpc, "energy_kinetic", 1) - mpc_get_aux_value(mpc, "energy_potential", 1)
+            else:
+                step_vf_data["mpc_rewards"] = mpc.lterm_fun(step_vf_data["mpc_next_state"],
+                                                            mpc.opt_x_num_unscaled["_u", 0, 0],
+                                                            mpc.opt_x_num_unscaled["_z", 1, 0, -1],
+                                                            mpc.opt_p_num["_tvp", 0],
+                                                            mpc.opt_p_num["_p", 0]).__float__()
+            if mpc.use_nn_vf:
+                info["mpc_value_fn"] = mpc.vf_fun(mpc.opt_x_num_unscaled["_x", -1, 0, -1],
+                                                     step_vf_data["mpc_parameter"],
+                                                     mpc.opt_p_num["_vf_weights"],
+                                                     mpc.opt_p_num["_vf_biases"]).__float__()
+            else:
+                info["mpc_value_fn"] = mpc.mterm_fun(mpc.opt_x_num_unscaled["_x", -1, 0, -1], mpc.opt_p_num["_p", 0]).__float__()
+
             info["data"] = step_vf_data
-            info["mpc_avg_stage_cost"] = step_vf_data["mpc_rewards"] / step_vf_data["mpc_n_horizon"]
+            info["mpc_avg_stage_cost"] = step_vf_data["mpc_rewards"]
 
         info["mpc_computation_time"] = sum([v for k, v in self.control_system.controller.mpc.solver_stats.items() if k.startswith("t_proc")])
 
@@ -475,18 +485,23 @@ class LetMPCEnv(gym.Env):
 
         return dataset
 
-    def set_value_function(self, input_phs, output_ph, tf_session):
-        if self.mpc_value_function_learning_status:
-            self.control_system.controller.set_value_function(input_phs, output_ph, tf_session)
-            self.value_function_is_set = True
-        else:
-            self.mpc_value_function_args = (input_phs, output_ph, tf_session)
+    def set_value_function_weights_and_biases(self, weights, biases):
+        self.control_system.controller.set_value_function_weights_and_biases(weights, biases)
 
-    def set_learning_status(self, status):
-        self.mpc_value_function_learning_status = status
-        if status and not self.value_function_is_set:
-            self.set_value_function(*self.mpc_value_function_args)
-            self.control_system.controller.value_function.set_enabled(status)
+    def save_value_function(self, save_folder, name=""):
+        self.control_system.controller.save_value_function(save_folder, name=name)
+
+    def load_value_function(self, load_folder, name=""):
+        self.control_system.controller.load_value_function(load_folder, name=name)
+
+    def set_value_function_enabled_status(self, status):
+        """
+        Enable/disable value function (i.e. if enabled it replaces mterm in the cost function).
+        :param status: enbabled/disabled
+        :return:
+        """
+        assert self.control_system.controller.mpc_config["objective"].get("vf", None) is not None
+        self.control_system.controller.update_mpc_params({"use_nn_vf": status})
 
 
 if __name__ == "__main__":  # TODO: constraints on pendulum and end episode if constraints violated

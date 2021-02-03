@@ -529,6 +529,18 @@ class LMPC:
         self.value_function = TensorFlowEvaluator(input_phs, [output_ph], tf_session)
         self._initialize_mpc(mpc_model=self.mpc.model)
 
+    def set_value_function_weights_and_biases(self, weights, biases):
+        assert isinstance(self.mpc.vf, casadiNNVF)
+        self.mpc.vf.set_weights_and_biases(weights, biases)
+
+    def save_value_function(self, save_folder, name=""):
+        assert isinstance(self.mpc.vf, casadiNNVF)
+        self.mpc.vf.save_to_file(save_folder, name)
+
+    def load_value_function(self, load_folder, name=""):
+        assert isinstance(self.mpc.vf, casadiNNVF)
+        self.mpc.vf.load_from_file(load_folder, name)
+
 
 class ETMPC(LMPC):
     def __init__(self, mpc_config, lqr_config, mpc_model=None, viewer=None):
@@ -744,10 +756,15 @@ class AHMPC(LMPC):
         return super().configure_viewer(viewer=viewer, plot_prediction=False)
 
     def _get_p_values(self, t):
-        if len(self.history["mpc_horizon"]) == 0:
-            self._p_template["_p", 0, "n_horizon"] = self.mpc_config["params"]["n_horizon"]
-        else:
-            self._p_template["_p", 0, "n_horizon"] = self.history["mpc_horizon"][-1]
+        for p_label in self._p_template.labels():
+            p_name = p_label.split(",")[2]
+            if p_name == "n_horizon":
+                if len(self.history["mpc_horizon"]) == 0:
+                    self._p_template["_p", 0, p_name] = self.mpc_config["params"]["n_horizon"]
+                else:
+                    self._p_template["_p", 0, p_name] = self.history["mpc_horizon"][-1]
+            elif "_r" in p_name:
+                self._p_template["_p", 0, p_name] = self._tvp_data[p_name][-1]
 
         return self._p_template
 
