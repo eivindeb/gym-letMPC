@@ -4,8 +4,9 @@ from gym_let_mpc.model import *
 import matplotlib.pyplot as plt
 import matplotlib.lines
 import collections.abc
-from gym_let_mpc.utils import str_replace_whole_words, TensorFlowEvaluator
+from gym_let_mpc.utils import str_replace_whole_words, casadiNNVF, TensorFlowEvaluator
 import casadi
+import copy
 
 
 def initialize_mpc(model, config, tvp_fun=None, p_fun=None, suppress_IPOPT_output=True, linear_solver="MA27", value_function=None):
@@ -51,7 +52,7 @@ def mpc_set_objective(mpc, cost_parameters, reference=None, parameters=None, val
         if cost_term in cost_parameters:
             expr = cost_parameters[cost_term]["expression"]
             if expr == "0":
-                costs[cost_term] = np.array([[0]])
+                costs[cost_term] = casadi.DM(0)
             else:
                 for var in sorted(cost_parameters[cost_term]["variables"], key=lambda x: len(x["name"]), reverse=True):
                     if var["type"] in ["_x", "_u", "_tvp", "_p", "_aux"]:
@@ -67,10 +68,12 @@ def mpc_set_objective(mpc, cost_parameters, reference=None, parameters=None, val
 
                 costs[cost_term] = eval(expr)
 
-    if value_function is not None:
-        costs["mterm"] = value_function
+    if cost_parameters.get("vf", None) is not None:
+        vf = casadiNNVF(**cost_parameters["vf"]["kw"])
+    else:
+        vf = None
 
-    mpc.set_objective(mterm=costs["mterm"], lterm=costs["lterm"], discount_factor=cost_parameters.get("discount_factor", 1))
+    mpc.set_objective(mterm=costs["mterm"], lterm=costs["lterm"], vf=vf, discount_factor=cost_parameters.get("discount_factor", 1))
 
     if "R_delta" in cost_parameters:
         mpc.set_rterm(**cost_parameters["R_delta"])
