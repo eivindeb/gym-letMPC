@@ -743,8 +743,8 @@ class AHMPC(LMPC):
         for input_i, input_name in enumerate(self.input_names):
             self.current_input[input_name] = mpc_optimal_action[input_i]
 
-        self.history["inputs"].append(self.current_input)
-        self.history["references"].append(self.current_reference)
+        self.history["inputs"].append(copy.deepcopy(self.current_input))
+        self.history["references"].append(copy.deepcopy(self.current_reference))
         self.history["errors"].append(self._get_tracking_error(state))
         self.history["tvp"].append(self._tvp_data)
 
