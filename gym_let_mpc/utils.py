@@ -1,7 +1,8 @@
 import numpy as np
 import re
 import tensorflow as tf
-import casadi
+from casadi import *
+import casadi.tools
 
 
 def str_replace_whole_words(string, pattern, replace_with):
@@ -147,3 +148,61 @@ class TensorFlowEvaluator(casadi.Callback):
         if len(self.refs) > 0:
             for ref in self.refs:
                 ref.set_enabled(status)
+
+
+class casadiNNVF:
+    def __init__(self, layers=()):
+        assert isinstance(layers, list) or isinstance(layers, tuple)
+        self.layers = layers
+        self.weights = None
+        self.biases = None
+        self.weights_num = None
+        self.biases_num = None
+        self.eval_VF = None
+
+    def create_function(self, state, parameters):
+        input_data_cat = vertcat(state, parameters).T
+        blank = SX.sym('blank')
+
+        # neuron_weights=SX.sym('neuron_weights')
+        in_size = input_data_cat.shape[1]
+        h_l_ws, h_l_bs = [], []
+
+        relu_activation = Function("relu_f", [blank], [casadi.fmax(0, blank)])
+
+        hidden_layer = input_data_cat
+        for l_i, l_units in enumerate(self.layers):
+            h_l_ws.append(casadi.tools.entry('hl_{}_weights'.format(l_i), sym=SX.sym('hl_{}_weights'.format(l_i), in_size, l_units)))
+            h_l_bs.append(casadi.tools.entry('hl_{}_bias'.format(l_i), sym=SX.sym('hl_{}_bias'.format(l_i), l_units, 1)))
+
+            hidden_layer = relu_activation(
+                (hidden_layer @ h_l_ws[l_i].sym) + (DM.ones(hidden_layer.shape[0], l_units) @ diag(h_l_bs[l_i].sym)))
+            in_size = hidden_layer.shape[1]
+
+        output_layer_weights = casadi.tools.entry("ol_weights", sym=SX.sym('ol_weights', in_size, 1))
+        output_layer_bias = casadi.tools.entry("ol_bias", sym=SX.sym('ol_bias', 1))
+        output_layer = (hidden_layer @ output_layer_weights.sym) + (
+                    DM.ones(hidden_layer.shape[0], 1) @ diag(output_layer_bias.sym))
+
+        self.weights = casadi.tools.struct_symSX(h_l_ws + [output_layer_weights])
+        self.biases = casadi.tools.struct_symSX(h_l_bs + [output_layer_bias])
+
+        self.weights_num = np.zeros(self.weights.shape)
+        self.biases_num = np.zeros(self.biases.shape)
+
+        self.eval_VF = Function('neural_network_evaluation',
+                        [state, parameters, self.weights, self.biases],
+                        [output_layer])
+
+    def set_weights_and_biases(self, weights, biases):
+        self.weights_num = np.concatenate([w.flatten(order="F") for w in weights]).reshape(-1, 1)
+        self.biases_num = np.concatenate([b.flatten(order="F") for b in biases]).reshape(-1, 1)
+
+    def save_to_file(self, save_folder, name=""):
+        np.save(os.path.join(save_folder, "{}_cnnvf_weights.npy".format(name)), self.weights_num)
+        np.save(os.path.join(save_folder, "{}_cnnvf_biases.npy".format(name)), self.biases_num)
+
+    def load_from_file(self, load_folder, name=""):
+        self.weights_num = np.load(os.path.join(load_folder, "{}_cnnvf_weights.npy".format(name)))
+        self.biases_num = np.load(os.path.join(load_folder, "{}_cnnvf_biases.npy".format(name)))
+
