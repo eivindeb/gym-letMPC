@@ -678,10 +678,10 @@ class AHMPC(LMPC):
         if "nlpsol_opts" not in mpc_config:
             mpc_config["nlpsol_opts"] = {}
 
-        mpc_config["nlpsol_opts"]["ipopt.max_iter"] = 200
+        mpc_config["nlpsol_opts"]["ipopt.max_iter"] = 250
         for state in mpc_config["model"]["states"].values():
             state["rhs"] = "({}) * (1 - hend)".format(state["rhs"])
-
+        
         mpc_config["objective"]["lterm"]["expression"] = "({}) * (1 - hend)".format(mpc_config["objective"]["lterm"]["expression"])
         mpc_config["objective"]["lterm"]["variables"].append({"name": "hend", "type": "_tvp"})
         for input_name in mpc_config["model"]["inputs"]:
