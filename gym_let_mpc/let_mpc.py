@@ -178,6 +178,9 @@ class LetMPCEnv(gym.Env):
                 self.traj_steps = sampled_reference.pop("traj_steps")
             else:
                 self.traj_steps = self.np_random.randint(40, 80)
+
+            self.trajectory_start_x = 0
+            self.trajectory_start_y = 0
             self.trajectory_goal_x = np.cos(self.theta_r) * self.traj_steps * self.control_system.controller.u_s_ref
             self.trajectory_goal_y = np.sin(self.theta_r) * self.traj_steps * self.control_system.controller.u_s_ref
             self.trajectory = {"x": np.linspace(sampled_state["x"], self.trajectory_goal_x, self.traj_steps),
@@ -191,6 +194,9 @@ class LetMPCEnv(gym.Env):
             self.control_system.controller.goal_x = self.trajectory_goal_x
             self.control_system.controller.goal_y = self.trajectory_goal_y
 
+            self.traj_start = np.array([self.trajectory_start_x, self.trajectory_start_y])
+            self.traj_goal = np.array([self.trajectory_goal_x, self.trajectory_goal_y])
+
             for obj_i in range(self.control_system.controller.n_objects):
                 if "obj_{}_r".format(obj_i) not in tvp:
                     tvp.update({"obj_{}_{}".format(obj_i, comp): [{"forecast": [0]}] for comp in ["x", "y", "r"]})
@@ -199,11 +205,11 @@ class LetMPCEnv(gym.Env):
                     tvp["obj_{}_r".format(obj_i)][0]["true"] = [obj_r]
 
                     delta_x = self.np_random.uniform(-obj_r, obj_r)
-                    delta_y = self.np_random.uniform(-np.sqrt((obj_r ** 2 - delta_x ** 2)), np.sqrt(obj_r ** 2 - (delta_x ** 2)))
-                    traj_xys = np.vstack((self.trajectory["x"], self.trajectory["y"]))
+                    delta_y = self.np_random.uniform(-np.sqrt(obj_r ** 2 - (delta_x ** 2)), np.sqrt(obj_r ** 2 - (delta_x ** 2)))
+                    traj_xys = np.vstack((self.trajectory["x"], self.trajectory["y"])) + np.array([delta_x, delta_y]).reshape(-1, 1)
                     obj_feasible_points = [traj_i for traj_i in range(self.trajectory["n_steps"]) if
-                                           np.linalg.norm(traj_xys[:, traj_i] - traj_xys[:, 0]) > (obj_r * 1.5) + delta_x + delta_y
-                                           and np.linalg.norm(traj_xys[:, traj_i] - traj_xys[:, -1]) > (obj_r * 1.5) + delta_x + delta_y]
+                                           np.linalg.norm(traj_xys[:, traj_i] - self.traj_start) > (obj_r * 1.75)
+                                           and np.linalg.norm(traj_xys[:, traj_i] - self.traj_goal) > (obj_r * 1.75)]
                     obj_center_traj_i = self.np_random.choice(obj_feasible_points)
                     tvp["obj_{}_x".format(obj_i)][0]["true"] = [self.trajectory["x"][obj_center_traj_i] + delta_x]
                     tvp["obj_{}_y".format(obj_i)][0]["true"] = [self.trajectory["y"][obj_center_traj_i] + delta_y]
