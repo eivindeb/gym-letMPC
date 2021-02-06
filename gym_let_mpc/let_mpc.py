@@ -487,7 +487,7 @@ class LetMPCEnv(gym.Env):
                             "constraint": self.sample_constraints(), "model": self.sample_model(),
                        "process_noise": {}, "tvp": {}}
             if self.config["mpc"]["type"] == "TTAHMPC":
-                ep_dict["reference"].update({"theta_r": self.theta_r, "traj_steps": self.traj_steps})
+                ep_dict["reference"].update({"theta_r": self.theta_r, "traj_steps": self.traj_steps, "ns": self.control_system.controller.object_noise_seed})
             s_i = 0
             for s_name, s_props in self.config["plant"]["model"]["states"].items():
                 if "W" in s_props:
