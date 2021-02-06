@@ -149,9 +149,8 @@ class TensorFlowEvaluator(casadi.Callback):
             for ref in self.refs:
                 ref.set_enabled(status)
 
-
 class casadiNNVF:
-    def __init__(self, layers=()):
+    def __init__(self, layers=(), type="nn"):
         assert isinstance(layers, list) or isinstance(layers, tuple)
         self.layers = layers
         self.weights = None
@@ -159,6 +158,7 @@ class casadiNNVF:
         self.weights_num = None
         self.biases_num = None
         self.eval_VF = None
+        self.type = type
 
     def create_function(self, state, parameters):
         input_data_cat = vertcat(state, parameters).T
@@ -171,15 +171,19 @@ class casadiNNVF:
         relu_activation = Function("relu_f", [blank], [casadi.fmax(0, blank)])
 
         hidden_layer = input_data_cat
-        for l_i, l_units in enumerate(self.layers):
-            h_l_ws.append(casadi.tools.entry('hl_{}_weights'.format(l_i), sym=SX.sym('hl_{}_weights'.format(l_i), in_size, l_units)))
-            h_l_bs.append(casadi.tools.entry('hl_{}_bias'.format(l_i), sym=SX.sym('hl_{}_bias'.format(l_i), l_units, 1)))
+        if self.type == "nn":
+            for l_i, l_units in enumerate(self.layers):
+                h_l_ws.append(casadi.tools.entry('hl_{}_weights'.format(l_i), sym=SX.sym('hl_{}_weights'.format(l_i), hidden_layer.shape[1], l_units)))
+                h_l_bs.append(casadi.tools.entry('hl_{}_bias'.format(l_i), sym=SX.sym('hl_{}_bias'.format(l_i), l_units, 1)))
 
-            hidden_layer = relu_activation(
-                (hidden_layer @ h_l_ws[l_i].sym) + (DM.ones(hidden_layer.shape[0], l_units) @ diag(h_l_bs[l_i].sym)))
-            in_size = hidden_layer.shape[1]
+                hidden_layer = relu_activation(
+                    (hidden_layer @ h_l_ws[l_i].sym) + (DM.ones(hidden_layer.shape[0], l_units) @ diag(h_l_bs[l_i].sym)))
+        elif self.type == "sos":
+            hidden_layer = hidden_layer ** 2
+        elif self.type == "poly":
+            hidden_layer = horzcat(hidden_layer, casadi.power(hidden_layer, 2))
 
-        output_layer_weights = casadi.tools.entry("ol_weights", sym=SX.sym('ol_weights', in_size, 1))
+        output_layer_weights = casadi.tools.entry("ol_weights", sym=SX.sym('ol_weights', hidden_layer.shape[1], 1))
         output_layer_bias = casadi.tools.entry("ol_bias", sym=SX.sym('ol_bias', 1))
         output_layer = (hidden_layer @ output_layer_weights.sym) + (
                     DM.ones(hidden_layer.shape[0], 1) @ diag(output_layer_bias.sym))

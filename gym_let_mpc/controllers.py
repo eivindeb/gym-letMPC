@@ -69,7 +69,7 @@ def mpc_set_objective(mpc, cost_parameters, reference=None, parameters=None, val
                 costs[cost_term] = eval(expr)
 
     if cost_parameters.get("vf", None) is not None:
-        vf = casadiNNVF(**cost_parameters["vf"]["kw"])
+        vf = casadiNNVF(**cost_parameters["vf"])
     else:
         vf = None
 
