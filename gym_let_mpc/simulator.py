@@ -214,10 +214,10 @@ class ControlSystem:
     def step(self, action):
         if len(self.tvps) > 0:
             for tvp in self.tvps.values():
-                if len(tvp.values) < self._step_count + self.controller.mpc.n_horizon:
-                    tvp.generate_values(self._step_count + self.controller.mpc.n_horizon - len(tvp.values))
+                if len(tvp.values) < self._step_count + self.controller.mpc.n_horizon + 1:
+                    tvp.generate_values(self._step_count + self.controller.mpc.n_horizon + 1 - len(tvp.values))
             tvp_forecasts = {name: self.tvps[name].get_values(self._step_count,
-                                                              self._step_count + self.controller.mpc.n_horizon,
+                                                              self._step_count + self.controller.mpc.n_horizon + 1,
                                                               with_noise=True)
                              for name in self.controller.tvp_props}
         else:

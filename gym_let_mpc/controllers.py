@@ -443,7 +443,7 @@ class LMPC:
 
     def _get_tvp_values(self, t_now):
         tvp_order = sorted(self._tvp_data)
-        for t in range(self.mpc.n_horizon):
+        for t in range(self.mpc.n_horizon + 1):
             self._tvp_template["_tvp", t] = np.array([self._tvp_data[k][t] for k in tvp_order])
 
         return self._tvp_template
@@ -727,7 +727,7 @@ class AHMPC(LMPC):
     def get_action(self, state, n_horizon, tvp_values=None):  # TODO: This is maybe bad as the name doesnt suggest that it changes the object but it acts closely related to a step function
         state_vec = self._get_state_vector(state)
         if n_horizon < self.mpc_config["params"]["n_horizon"]:
-            tvp_values["hend"][n_horizon:] = [1.0] * (self.mpc_config["params"]["n_horizon"] - n_horizon)
+            tvp_values["hend"][n_horizon:] = [1.0] * (self.mpc_config["params"]["n_horizon"] + 1 - n_horizon)
 
         for ref_name in self.current_reference:
             self.current_reference[ref_name] = tvp_values[ref_name][0]
