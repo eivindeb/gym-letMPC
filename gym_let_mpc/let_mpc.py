@@ -14,7 +14,7 @@ class LetMPCEnv(gym.Env):
     def __init__(self, config_path, config_kw=None):
         def set_config_attrs(parent, kws):
             for attr, val in kws.items():
-                if isinstance(val, dict) or isinstance(parent[attr], list):
+                if isinstance(val, dict): #or isinstance(parent[attr], list):
                     set_config_attrs(parent[attr], val)
                 else:
                     parent[attr] = val
