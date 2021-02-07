@@ -243,19 +243,29 @@ class LetMPCEnv(gym.Env):
             done = True
             info["termination"] = "steps"
         elif len(self.config["environment"].get("end_on_constraint_violation", [])) > 0:
-            for c_name, c_d in self.control_system.get_constraint_distances().items():
-                if (c_name.startswith("clin-") or (c_name.startswith("cnlin-") and c_name.endswith("h"))) and\
-                        c_name.split("-")[1] in self.config["environment"]["end_on_constraint_violation"] and c_d > 0:
-                    done = True
-                    info["termination"] = "constraint"
-                    additional_rew = self.config["environment"]["reward"].get("termination_weight", -1) * (self.max_steps - self.steps_count)
-                    info["reward/constraint"] = -additional_rew
-                    break
+            if isinstance(self.control_system.controller, TTAHMPC):
+                for obj_i in range(self.control_system.controller.n_objects):
+                    if self.control_system.controller.get_obj_distance(self.control_system.current_state, obj_i) <= 0:
+                        done = True
+                        info["termination"] = "constraint"
+                        additional_rew = self.config["environment"]["reward"].get("termination_weight", -1) * (
+                                    self.max_steps - self.steps_count)
+                        info["reward/constraint"] = -additional_rew
+                        break
+            else:
+                for c_name, c_d in self.control_system.get_constraint_distances().items():
+                    if (c_name.startswith("clin-") or (c_name.startswith("cnlin-") and c_name.endswith("h"))) and\
+                            c_name.split("-")[1] in self.config["environment"]["end_on_constraint_violation"] and c_d > 0:
+                        done = True
+                        info["termination"] = "constraint"
+                        additional_rew = self.config["environment"]["reward"].get("termination_weight", -1) * (self.max_steps - self.steps_count)
+                        info["reward/constraint"] = -additional_rew
+                        break
         if info.get("termination", None) != "constraint":
             info["reward/constraint"] = 0
         if self.config["mpc"]["type"] == "TTAHMPC" and \
                 np.linalg.norm(np.array([self.trajectory_goal_x, self.trajectory_goal_y]) - \
-                               np.array([self.control_system.current_state["x"], self.control_system.current_state["y"]])) <= 1e-2:
+                               np.array([self.control_system.current_state["x"], self.control_system.current_state["y"]])) <= 0.5:
             done = True
             info["termination"] = "goal"
 

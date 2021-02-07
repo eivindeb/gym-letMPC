@@ -790,7 +790,7 @@ class TTAHMPC(AHMPC):
         if self.n_objects > 0:
             if "auxs" not in mpc_config["model"]:
                 mpc_config["model"]["auxs"] = {}
-            self.obj_kw = data = {"r": {"u_low": 0.5, "u_high": 1, "sigma": 0.05, "theta": 0.75, "low": -0.1, "high": 0.1}, "x": {"u_low": 0, "u_high": 0, "sigma": 0.5, "theta": 0.15, "low": -1, "high": 1}}
+            self.obj_kw = data = {"r": {"u_low": 0.5, "u_high": 1, "sigma": 0.05, "theta": 0.75, "low": -0.1, "high": 0.1}, "x": {"u_low": 0, "u_high": 0, "sigma": 0.5, "theta": 0.15, "low": -10, "high": 10}}
             data["y"] = data["x"]
             for obj_i in range(self.n_objects):
                 for comp in ["x", "y", "r"]:
@@ -849,13 +849,14 @@ class TTAHMPC(AHMPC):
         self.extra_render_axes = 1
         self.goal_x = None
         self.goal_y = None
-        self.objects_noise = None
+        self.obj_data = None
         self.object_noise_seed = None
         self._max_obj_dist = self.u_s_ref * 80
+        self._max_horizon = 50
         self._n_noiseless = 0
 
     def reset(self, state=None, reference=None, constraint=None, tvp=None):
-        self.objects_noise = None
+        self.obj_data = None
         if reference is not None and "ns" in reference:
             self.object_noise_seed = reference.pop("ns")
         else:
@@ -863,24 +864,28 @@ class TTAHMPC(AHMPC):
             for obj_i in range(self.n_objects):
                 self.object_noise_seed.append([])
                 for comp in ["x", "y", "r"]:
-                    self.object_noise_seed[obj_i].append(np.random.uniform(self.obj_kw[comp]["low"], self.obj_kw[comp]["high"]))
+                    self.object_noise_seed[obj_i].append(np.random.uniform(0.75 * self.obj_kw[comp]["high"], self.obj_kw[comp]["high"]))
+                    if np.random.uniform() < 0.5:
+                        self.object_noise_seed[obj_i][-1] *= -1
         super().reset(state=state, reference=reference, constraint=constraint, tvp=tvp)
 
     def get_action(self, state, n_horizon, tvp_values=None):
-        if self.objects_noise is None:
-            self.objects_noise = []
+        if self.obj_data is None:
+            self.obj_data = []
             for obj_i in range(self.n_objects):
-                self.objects_noise.append({comp: np.full((self.mpc.n_horizon + 1,), tvp_values["obj_{}_{}".format(obj_i, comp)][0]) for comp in ["x", "y", "r"]})
+                self.obj_data.append({comp: np.full((self.mpc.n_horizon + 1,), tvp_values["obj_{}_{}".format(obj_i, comp)][0]) for comp in ["x", "y", "r"]})
 
         for obj_i in range(self.n_objects):
-            rel_obj_dist = abs(mpc_get_aux_value(self.mpc, "obj_{}_distance".format(obj_i))) / self._max_obj_dist
+            rel_obj_dist = min(2 * abs(mpc_get_aux_value(self.mpc, "obj_{}_distance".format(obj_i))) / self._max_obj_dist, 1)
             for comp_i, comp in enumerate(["x", "y", "r"]):
-                tvp_values["obj_{}_{}".format(obj_i, comp)] = self.objects_noise[obj_i][comp] + \
-                                                              np.concatenate([np.zeros((self._n_noiseless,))
-                                                                , np.linspace(0,
-                                                                              self.object_noise_seed[obj_i][comp_i] * rel_obj_dist,
-                                                                              max(0, self.mpc.n_horizon + 1 - self._n_noiseless))])
+                forecast_noise = np.zeros((self.mpc.n_horizon + 1,))
+                if n_horizon > self._n_noiseless:
+                    forecast_noise[self._n_noiseless:n_horizon] = np.linspace(0, self.object_noise_seed[obj_i][comp_i] * rel_obj_dist, self._max_horizon)[:n_horizon - self._n_noiseless]
+                tvp_values["obj_{}_{}".format(obj_i, comp)] = self.obj_data[obj_i][comp] + forecast_noise
         return super().get_action(state, n_horizon, tvp_values)
+
+    def get_obj_distance(self, state, obj_i):
+        return np.linalg.norm(np.array([state["x"], state["y"]]) - np.array([self.obj_data[obj_i]["x"][0], self.obj_data[obj_i]["y"][0]]))
 
     def configure_viewer(self, viewer=None, plot_prediction=False):
         viewer = super().configure_viewer(viewer=viewer, plot_prediction=False)
