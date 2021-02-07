@@ -685,7 +685,8 @@ class AHMPC(LMPC):
         mpc_config["objective"]["lterm"]["expression"] = "({}) * (1 - hend)".format(mpc_config["objective"]["lterm"]["expression"])
         mpc_config["objective"]["lterm"]["variables"].append({"name": "hend", "type": "_tvp"})
         for input_name in mpc_config["model"]["inputs"]:
-            mpc_config["objective"]["lterm"]["variables"].append({"name": input_name, "type": "_u"})
+            if input_name not in [var["name"] for var in mpc_config["objective"]["lterm"]["variables"]]:
+                mpc_config["objective"]["lterm"]["variables"].append({"name": input_name, "type": "_u"})
             mpc_config["objective"]["lterm"]["expression"] += " + hend * ({}) ** 2".format(input_name)
 
         for constraint in mpc_config["constraints"]:
