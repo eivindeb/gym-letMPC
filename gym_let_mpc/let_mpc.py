@@ -367,6 +367,8 @@ class LetMPCEnv(gym.Env):
                     obs.append(abs(var_val))
                 elif transform == "square":
                     obs.append(var_val ** 2)
+                elif transform == "sqrt":
+                    obs.append(np.sqrt(var_val))
                 else:
                     raise ValueError
 
@@ -437,6 +439,8 @@ class LetMPCEnv(gym.Env):
                 raise ValueError
         elif var["type"] == "aux":
             val = mpc_get_aux_value(self.control_system.controller.mpc, var["name"])
+        elif var["type"] == "obj_dist":
+            val = self.control_system.controller.get_obj_distance(self.control_system.current_state, int(var["name"].split("_")[1]))
         else:
             raise ValueError
 
