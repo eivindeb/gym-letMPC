@@ -8,6 +8,7 @@ import collections.abc
 import matplotlib.pyplot as plt
 from gym_let_mpc.utils import str_replace_whole_words, casadiNNVF
 import copy
+import gym_let_mpc
 
 
 class LetMPCEnv(gym.Env):
@@ -177,7 +178,7 @@ class LetMPCEnv(gym.Env):
             if sampled_reference is not None and "traj_steps" in sampled_reference:
                 self.traj_steps = sampled_reference.pop("traj_steps")
             else:
-                self.traj_steps = self.np_random.randint(40, 80)
+                self.traj_steps = self.np_random.randint(60, 100)
 
             self.trajectory_start_x = 0
             self.trajectory_start_y = 0
@@ -282,25 +283,26 @@ class LetMPCEnv(gym.Env):
 
         if self.control_system.controller.mpc_config["objective"].get("vf", None) is not None:
             mpc = self.control_system.controller.mpc
-            step_vf_data = {"mpc_state": mpc.opt_p_num["_x0"].toarray().ravel(),
-                            "mpc_next_state": self.control_system.get_state_vector(self.control_system.current_state)}
             use_p_idxs = []
             for p_i, p_l in enumerate(mpc.model._p.labels()):
                 if "n_horizon" not in p_l:
                     use_p_idxs.append(p_i)
-            step_vf_data["mpc_parameter"] = mpc.opt_p_num["_p", 0][use_p_idxs].toarray().ravel() if len(use_p_idxs) > 0 else []
+            parameters = mpc.opt_p_num["_p", 0][use_p_idxs].toarray().ravel() if len(use_p_idxs) > 0 else []
+            step_vf_data = {"mpc_state": np.concatenate([mpc.opt_p_num["_x0"].toarray().ravel(), parameters], axis=0),
+                            "mpc_next_state": np.concatenate([self.control_system.get_state_vector(self.control_system.current_state), parameters], axis=0)}
             step_vf_data["mpc_n_horizon"] = self.control_system.controller.history["mpc_horizon"][-1]
-            if self.config["plant"]["model"].get("auxs", {}).get("energy_kinetic", None) is not None:
+            if self.config["plant"]["model"].get("auxs", {}).get("energy_kinetic", None) is not None and False:
                 step_vf_data["mpc_rewards"] = mpc_get_aux_value(mpc, "energy_kinetic", 1) - mpc_get_aux_value(mpc, "energy_potential", 1)
             else:
-                step_vf_data["mpc_rewards"] = mpc.lterm_fun(step_vf_data["mpc_next_state"],
+                #step_vf_data["mpc_parameter"] -=
+                step_vf_data["mpc_rewards"] = mpc.lterm_fun(self.control_system.get_state_vector(self.control_system.current_state),
                                                             mpc.opt_x_num_unscaled["_u", 0, 0],
                                                             mpc.opt_x_num_unscaled["_z", 1, 0, -1],
                                                             mpc.opt_p_num["_tvp", 0],
                                                             mpc.opt_p_num["_p", 0]).__float__()
             if mpc.use_nn_vf:
                 info["mpc_value_fn"] = mpc.vf_fun(mpc.opt_x_num_unscaled["_x", -1, 0, -1],
-                                                     step_vf_data["mpc_parameter"],
+                                                     parameters,
                                                      mpc.opt_p_num["_vf_weights"],
                                                      mpc.opt_p_num["_vf_biases"]).__float__()
             else:

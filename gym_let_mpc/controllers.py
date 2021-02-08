@@ -790,7 +790,7 @@ class TTAHMPC(AHMPC):
         if self.n_objects > 0:
             if "auxs" not in mpc_config["model"]:
                 mpc_config["model"]["auxs"] = {}
-            self.obj_kw = data = {"r": {"u_low": 0.5, "u_high": 1, "sigma": 0.05, "theta": 0.75, "low": -0.1, "high": 0.1}, "x": {"u_low": 0, "u_high": 0, "sigma": 0.5, "theta": 0.15, "low": -10, "high": 10}}
+            self.obj_kw = data = {"r": {"u_low": 0.5, "u_high": 1, "sigma": 0.05, "theta": 0.75, "low": 0.01, "high": 0.1}, "x": {"u_low": 0, "u_high": 0, "sigma": 0.5, "theta": 0.15, "low": 0.5, "high": 2}}
             data["y"] = data["x"]
             for obj_i in range(self.n_objects):
                 for comp in ["x", "y", "r"]:
@@ -851,7 +851,7 @@ class TTAHMPC(AHMPC):
         self.goal_y = None
         self.obj_data = None
         self.object_noise_seed = None
-        self._max_obj_dist = self.u_s_ref * 80
+        self._max_obj_dist = self.u_s_ref * 40
         self._max_horizon = 50
         self._n_noiseless = 0
 
@@ -864,7 +864,7 @@ class TTAHMPC(AHMPC):
             for obj_i in range(self.n_objects):
                 self.object_noise_seed.append([])
                 for comp in ["x", "y", "r"]:
-                    self.object_noise_seed[obj_i].append(np.random.uniform(0.75 * self.obj_kw[comp]["high"], self.obj_kw[comp]["high"]))
+                    self.object_noise_seed[obj_i].append(np.random.uniform(self.obj_kw[comp]["low"], self.obj_kw[comp]["high"]))
                     if np.random.uniform() < 0.5:
                         self.object_noise_seed[obj_i][-1] *= -1
         super().reset(state=state, reference=reference, constraint=constraint, tvp=tvp)
@@ -876,7 +876,7 @@ class TTAHMPC(AHMPC):
                 self.obj_data.append({comp: np.full((self.mpc.n_horizon + 1,), tvp_values["obj_{}_{}".format(obj_i, comp)][0]) for comp in ["x", "y", "r"]})
 
         for obj_i in range(self.n_objects):
-            rel_obj_dist = min(2 * abs(mpc_get_aux_value(self.mpc, "obj_{}_distance".format(obj_i))) / self._max_obj_dist, 1)
+            rel_obj_dist = min(self.get_obj_distance(state, obj_i) / self._max_obj_dist, 1)
             for comp_i, comp in enumerate(["x", "y", "r"]):
                 forecast_noise = np.zeros((self.mpc.n_horizon + 1,))
                 if n_horizon > self._n_noiseless:
