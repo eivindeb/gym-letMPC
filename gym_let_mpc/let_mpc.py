@@ -162,7 +162,11 @@ class LetMPCEnv(gym.Env):
             sampled_state.update(state)
         elif len(sampled_state) == 0:
             sampled_state = None
-        if reference is not None:
+        if reference is not None or (tvp is not None and any([k.endswith("_r") for k in tvp])):
+            if reference is not None:
+                reference.update({k: sum(v[0]["true"]) for k, v in tvp.items() if k.endswith("_r")})
+            else:
+                reference = {k: sum(v[0]["true"]) for k, v in tvp.items() if k.endswith("_r")}
             sampled_reference.update(reference)
         elif len(sampled_reference) == 0:
             sampled_reference = None
