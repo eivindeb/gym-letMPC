@@ -37,6 +37,8 @@ def initialize_mpc(model, config, tvp_fun=None, p_fun=None, suppress_IPOPT_outpu
         mpc.p_fun = p_fun
     if "constraints" in config:
         mpc = mpc_set_constraints(mpc, config["constraints"])
+    if "terminal_constraints" in config:
+        mpc = mpc_set_constraints(mpc, config["terminal_constraints"], terminal=True)
     if "scaling" in config:
         mpc = mpc_set_scaling(mpc, config["scaling"])
     if "uncertainty" in config:
@@ -82,9 +84,10 @@ def mpc_set_objective(mpc, cost_parameters, reference=None, parameters=None, val
     return mpc
 
 
-def mpc_set_constraints(mpc, constraints):
+def mpc_set_constraints(mpc, constraints, terminal=False):
     for c in constraints:
         if "variables" in c:
+            assert not terminal
             expr = c["expression"]
             for var in sorted(c["variables"], key=lambda x: len(x["name"]), reverse=True):
                 if var["type"] in ["_x", "_u", "_tvp", "_aux"]:
@@ -99,6 +102,7 @@ def mpc_set_constraints(mpc, constraints):
             mpc.set_nl_cons(expr_name, eval(expr), ub=c["value"], soft_constraint=c.get("soft", False), penalty_term_cons=c["cost"])
         else:
             if c.get("soft", False):  # TODO: support for arbitrary expressions
+                assert not terminal
                 if c["type"] == "_x":
                     expr = mpc.model.x[c["name"]]
                 elif c["type"] == "_u":
@@ -114,7 +118,15 @@ def mpc_set_constraints(mpc, constraints):
                                 expr, soft_constraint=True, penalty_term_cons=c["cost"],
                                 ub=c["value"])
             else:
-                mpc.bounds[c["constraint_type"], c["type"], c["name"]] = c["value"]
+                if terminal:
+                    mpc.use_terminal_bounds = True
+                    if isinstance(c["value"], str):
+                        val = 0
+                    else:
+                        val = c["value"]
+                    mpc.terminal_bounds[c["constraint_type"], c["name"]] = val
+                else:
+                    mpc.bounds[c["constraint_type"], c["type"], c["name"]] = c["value"]
 
     return mpc
 
@@ -222,6 +234,10 @@ class LMPC:
         else:
             tvp_fun = None
             self.tvp_props = None
+
+        for t_c in mpc_config.get("terminal_constraints", []):
+            if isinstance(t_c["value"], str):
+                assert t_c["value"] in self.tvp_props
 
         if len(mpc_config["model"].get("ps", [])) > 0:
             p_fun = self._get_p_values
@@ -575,6 +591,10 @@ class ETMPC(LMPC):
         self._tvp_data = tvp_values
 
         if compute_mpc_solution:
+            for t_c in self.mpc_config.get("terminal_constraints", []):
+                if isinstance(t_c["value"], str):
+                    self.mpc.terminal_bounds[t_c["constraint_type"], t_c["name"]] = tvp_values[t_c["value"]][-1]
+
             self.mpc.t0 = len(self.history["mpc_compute"]) * self.mpc.data.meta_data['t_step']
             mpc_optimal_action = self.mpc.make_step(state_vec)
             self.mpc_state_preds = mpc_get_solution(self.mpc, states="all")
@@ -622,10 +642,10 @@ class ETMPC(LMPC):
             self.steps_since_mpc_computation += 1
 
         for u_i, u_name in enumerate(self.input_names):
-            if "c-{}-u".format(u_name) in self.constraints:
-                u_cfs[u_i] = min(u_cfs[u_i], self.constraints["c-{}-u".format(u_name)]["value"])
-            if "c-{}-l".format(u_name) in self.constraints:
-                u_cfs[u_i] = max(u_cfs[u_i], self.constraints["c-{}-l".format(u_name)]["value"])
+            if "clin-{}-u".format(u_name) in self.constraints:
+                u_cfs[u_i] = min(u_cfs[u_i], self.constraints["clin-{}-u".format(u_name)]["value"])
+            if "clin-{}-l".format(u_name) in self.constraints:
+                u_cfs[u_i] = max(u_cfs[u_i], self.constraints["clin-{}-l".format(u_name)]["value"])
 
         self.history["u_cfs"].append(u_cfs)
 
