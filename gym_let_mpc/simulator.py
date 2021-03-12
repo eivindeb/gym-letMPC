@@ -214,10 +214,10 @@ class ControlSystem:
     def step(self, action):
         if len(self.tvps) > 0:
             for tvp in self.tvps.values():
-                if len(tvp.values) < self._step_count + self.controller.mpc.n_horizon + 1:
-                    tvp.generate_values(self._step_count + self.controller.mpc.n_horizon + 1 - len(tvp.values))
+                if len(tvp.values) < self._step_count + self.controller.n_horizon + 1:
+                    tvp.generate_values(self._step_count + self.controller.n_horizon + 1 - len(tvp.values))
             tvp_forecasts = {name: self.tvps[name].get_values(self._step_count,
-                                                              self._step_count + self.controller.mpc.n_horizon + 1,
+                                                              self._step_count + self.controller.n_horizon + 1,
                                                               with_noise=True)
                              for name in self.controller.tvp_props}
         else:
@@ -226,8 +226,8 @@ class ControlSystem:
         for raw_input_i, input_vector_i in enumerate(self.raw_actions.values()):  # TODO: consider improving this
              control_input = np.insert(control_input, input_vector_i, action[raw_input_i], axis=0)
         step_process_noise = self._get_process_noise()
-        step_state = self.simulator.make_step(control_input, w0=step_process_noise.reshape(-1, 1))
-        self.current_state.update(self._get_state_dict(step_state))
+        step_state = self.simulator.make_step(np.atleast_2d(control_input), w0=step_process_noise.reshape(-1, 1))
+        self.current_state.update(self.get_state_dict(step_state))
         for state in self.current_state:
             clip = self.config["model"]["states"][state].get("clip", None)
             if clip is not None:
@@ -277,7 +277,7 @@ class ControlSystem:
             assert len(t_now.shape) == 1 and t_now.shape[0] == 1
             t_now = round(t_now[0])
         for i, name in enumerate(self.config["model"]["tvps"]):
-            self._tvp_template[name, i] = self.tvps[name].get_values(t_now)
+            self._tvp_template[name, i] = self.tvps[name].get_values(self._step_count + i)
 
         return self._tvp_template
 
@@ -289,7 +289,7 @@ class ControlSystem:
         """
         return np.array([state[s_name] for s_name in self.state_names])
 
-    def _get_state_dict(self, state_vector):
+    def get_state_dict(self, state_vector):
         if len(state_vector.shape) == 2 and state_vector.shape[1] == 1:
             state_vector = state_vector.reshape((-1,))
         return {s_name: state_vector[s_i] for s_i, s_name in enumerate(self.state_names)}
