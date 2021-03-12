@@ -74,37 +74,49 @@ class LetMPCEnv(gym.Env):
         self.np_random = None
         self.min_constraint_delta = 0.25  # TODO: how and where to set
 
-        obs_high = []
-        obs_low = []
-        for obs_var in self.config["environment"]["observation"]["variables"]:
-            for var_transform in obs_var.get("transform", ["none"]):
-                for lim_i, lim in enumerate(obs_var.get("limits", [None, None])):
-                    if lim is None:
-                        if lim_i == 0:
-                            obs_low.append(-np.finfo(np.float32).max)
+        def get_observation_space(vars):
+            obs_high = []
+            obs_low = []
+            for obs_var in vars:
+                for var_transform in obs_var.get("transform", ["none"]):
+                    for lim_i, lim in enumerate(obs_var.get("limits", [None, None])):
+                        if lim is None:
+                            if lim_i == 0:
+                                obs_low.append(-np.finfo(np.float32).max)
+                            else:
+                                obs_high.append(np.finfo(np.float32).max)
                         else:
-                            obs_high.append(np.finfo(np.float32).max)
-                    else:
-                        if var_transform == "none":
-                            if lim_i == 0:
-                                obs_low.append(lim)
+                            if var_transform == "none":
+                                if lim_i == 0:
+                                    obs_low.append(lim)
+                                else:
+                                    obs_high.append(lim)
+                            elif var_transform == "absolute":
+                                if lim_i == 0:
+                                    obs_low.append(0)
+                                else:
+                                    obs_high.append(lim)
+                            elif var_transform == "square":
+                                if lim_i == 0:
+                                    obs_low.append(0)
+                                else:
+                                    obs_high.append(lim ** 2)
                             else:
-                                obs_high.append(lim)
-                        elif var_transform == "absolute":
-                            if lim_i == 0:
-                                obs_low.append(0)
-                            else:
-                                obs_high.append(lim)
-                        elif var_transform == "square":
-                            if lim_i == 0:
-                                obs_low.append(0)
-                            else:
-                                obs_high.append(lim ** 2)
-                        else:
-                            raise NotImplementedError
-        self.observation_space = gym.spaces.Box(low=np.array(obs_low, dtype=np.float32),
-                                                high=np.array(obs_high, dtype=np.float32),
-                                                dtype=np.float32)
+                                raise NotImplementedError
+            return obs_high, obs_low
+        if isinstance(self.config["environment"]["observation"]["variables"], dict):
+            obs_spaces = {}
+            for obs_name, obs_vars in self.config["environment"]["observation"]["variables"].items():
+                o_h, o_l = get_observation_space(obs_vars)
+                obs_spaces[obs_name] = {"low": o_l, "high": o_l}
+            self.observation_space = gym.spaces.Dict({k: gym.spaces.Box(low=np.array(v["low"], dtype=np.float32),
+                                                                        high=np.array(v["high"], dtype=np.float32),
+                                                                        dtype=np.float32) for k, v in obs_spaces.items()})
+        else:
+            obs_high, obs_low = get_observation_space(self.config["environment"]["observation"]["variables"])
+            self.observation_space = gym.spaces.Box(low=np.array(obs_low, dtype=np.float32),
+                                                    high=np.array(obs_high, dtype=np.float32),
+                                                    dtype=np.float32)
 
         self.viewer = None
 
@@ -361,22 +373,36 @@ class LetMPCEnv(gym.Env):
             self.viewer["figure"].show()
 
     def get_observation(self):
-        obs = []
-        for var in self.config["environment"]["observation"]["variables"]:
-            var_val = self._get_variable_value(var)
-            for transform in var.get("transform", ["none"]):
-                if transform == "none":
-                    obs.append(var_val)
-                elif transform == "absolute":
-                    obs.append(abs(var_val))
-                elif transform == "square":
-                    obs.append(var_val ** 2)
-                elif transform == "sqrt":
-                    obs.append(np.sqrt(var_val))
-                else:
-                    raise ValueError
+        def _transform_val(_val, _transform):
+            if _transform == "none":
+                return _val
+            elif _transform == "absolute":
+                return abs(_val)
+            elif _transform == "square":
+                return _val ** 2
+            elif _transform == "sqrt":
+                return np.sqrt(_val)
+            else:
+                raise ValueError
+            
+        if isinstance(self.config["environment"]["observation"]["variables"], dict):
+            obs = {}
+            for obs_name, vars in self.config["environment"]["observation"]["variables"].items():
+                obs[obs_name] = []
+                for var in vars:
+                    var_val = self._get_variable_value(var)
+                    for transform in var.get("transform", ["none"]):
+                        obs[obs_name].append(_transform_val(var_val, transform))
+                obs[obs_name] = np.array(obs[obs_name])
+        else:
+            obs = []
+            for var in self.config["environment"]["observation"]["variables"]:
+                var_val = self._get_variable_value(var)
+                for transform in var.get("transform", ["none"]):
+                    obs.append(_transform_val(var_val, transform))
+            obs = np.array(obs)
 
-        return np.array(obs)
+        return obs
 
     def get_reward(self, rew_expr=None, done=False, info=None):
         if rew_expr is None:
