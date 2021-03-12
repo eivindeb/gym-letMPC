@@ -245,10 +245,23 @@ class LetMPCEnv(gym.Env):
 
     def step(self, action):
         assert not np.any(np.isnan(action))
-        a_dict = {a_props["name"]: action[a_i]
-                                        for a_i, a_props in enumerate(self.config["environment"]["action"]["variables"])}
-
-        self.control_system.step(np.round(a_dict["mpc_horizon"]).astype(np.int32))#np.atleast_1d(int(a_dict["mpc_compute"])))
+        if isinstance(action, np.ndarray) and len(action.shape) > 1:
+            action = action[0, :]
+        if self.config["mpc"]["type"] == "ETMPC":
+            a_dict = {"mpc_compute": action}#round(action)}
+            action = a_dict["mpc_compute"]
+        elif self.config["mpc"]["type"] in ["AHMPC", "TTAHMPC", "TTAHMPCRANGE"]:
+            a_dict = {a_props["name"]: np.round(action).astype(np.int32)
+                      for a_i, a_props in enumerate(self.config["environment"]["action"]["variables"])}
+            action = a_dict["mpc_horizon"]
+        elif self.config["mpc"]["type"] == "LQRMPC":  # TODO: remove this test stuff
+            a_dict = {"lqr": action[0]}
+            pass
+        elif self.config["mpc"]["type"] == "LQRETMPC":
+            a_dict = {"mpc_compute": action[0], "lqr": action[1:]}
+        else:
+            raise ValueError
+        self.control_system.step(action)#np.atleast_1d(int(a_dict["mpc_compute"])))
         self.history["actions"].append(a_dict)
         self.steps_count += 1
 
