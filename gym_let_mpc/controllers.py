@@ -581,7 +581,7 @@ class ETMPC(LMPC):
         self._mpc_action_sequence = None
 
         if self.lqr_config["model"]["class"] == "linear":
-            self.mpc.u0 = self.lqr.get_action(state)
+            self.mpc.u0 = self.lqr.get_action(self._get_state_vector(state))
 
         self.mpc.set_initial_guess()
 

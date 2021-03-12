@@ -343,7 +343,7 @@ class LetMPCEnv(gym.Env):
         #info["mpc_computation_time"] = sum([v for k, v in self.control_system.controller.get_mpc().solver_stats.items() if k.startswith("t_proc")])
         try:
             info["execution_time"] = self.control_system.controller.history["execution_time"][-1]
-        except KeyError:
+        except (KeyError, IndexError):
             info["execution_time"] = np.nan
 
         info.update({k: v.astype(np.float64) if hasattr(v, "dtype") else v for k, v in a_dict.items()})
