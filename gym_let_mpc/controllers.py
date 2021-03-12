@@ -312,7 +312,7 @@ class LMPC:
         #self.mpc.calculate_aux_num()
 
         self.current_input = {u_name: None for u_name in self.input_names}
-        self.history = {"inputs": [self.current_input], "references": [self.current_reference],
+        self.history = {"inputs": [copy.deepcopy(self.current_input)], "references": [copy.deepcopy(self.current_reference)],
                         "errors": [self._get_tracking_error(state)],
                         "tvp": []}
 
@@ -587,8 +587,13 @@ class ETMPC(LMPC):
         if self.steps_since_mpc_computation is None or self.steps_since_mpc_computation >= self.mpc.n_horizon - 1:
             compute_mpc_solution = True
 
+        for ref_name in self.current_reference:
+            if ref_name in tvp_values:
+                self.current_reference[ref_name] = tvp_values[ref_name][0]
+
         state_vec = self._get_state_vector(state)
         self._tvp_data = tvp_values
+
 
         if compute_mpc_solution:
             for t_c in self.mpc_config.get("terminal_constraints", []):
@@ -652,8 +657,8 @@ class ETMPC(LMPC):
         for input_i, input_name in enumerate(self.input_names):
             self.current_input[input_name] = u_cfs[input_i]
 
-        self.history["inputs"].append(self.current_input)
-        self.history["references"].append(self.current_reference)
+        self.history["inputs"].append(copy.deepcopy(self.current_input))
+        self.history["references"].append(copy.deepcopy(self.current_reference))
         self.history["errors"].append(self._get_tracking_error(state))
         self.history["tvp"].append(self._tvp_data)
 
