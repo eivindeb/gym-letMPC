@@ -100,7 +100,7 @@ def initialize_mpc_model(config):
     return model
 
 
-def get_lqr_system(config):
+def get_lqr_system(config, t_step):
     def expression_replace_parameters(expr, parameters):
         for p_name, p_val in sorted(parameters.items(), key=lambda x: len(x[0]), reverse=True):
             expr = str_replace_whole_words(expr, p_name, p_val)
@@ -128,6 +128,9 @@ def get_lqr_system(config):
                     a_s_val = expression_replace_parameters(a_s_val, config["model"]["parameters"])
                     if config["model"]["class"] == "linear":
                         a_s_val = eval(a_s_val)
+                a_s_val *= t_step
+            elif state_name == a_s_name:
+                a_s_val = 1
             else:
                 a_s_val = 0
             s_a.append(a_s_val)
@@ -140,6 +143,7 @@ def get_lqr_system(config):
                     b_u_val = expression_replace_parameters(b_u_val, config["model"]["parameters"])
                     if config["model"]["class"] == "linear":
                         b_u_val = eval(b_u_val)
+                b_u_val *= t_step
             else:
                 b_u_val = 0
             s_b.append(b_u_val)

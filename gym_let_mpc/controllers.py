@@ -182,7 +182,7 @@ class LQR:
             self._compute_control_law()
 
     def get_action(self, x):
-        return - self.K * x
+        return (-self.K * x).A
 
     def _compute_control_law(self):  # TODO: supress pending deprecated warnings about matrix
         """Solve the continuous time lqr controller.
@@ -569,7 +569,7 @@ class ETMPC(LMPC):
         super().__init__(mpc_config, mpc_model=mpc_model, viewer=viewer)
         self.lqr_config = lqr_config
 
-        A, B, Q, R, JA, JB = get_lqr_system(lqr_config)
+        A, B, Q, R, JA, JB = get_lqr_system(lqr_config, self.mpc_config["params"]["t_step"])
         self.lqr = LQR(A, B, Q, R, JA, JB)
 
         self.steps_since_mpc_computation = None
