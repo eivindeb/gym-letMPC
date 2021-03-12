@@ -311,7 +311,11 @@ class LetMPCEnv(gym.Env):
             info["data"] = step_vf_data
             info["mpc_avg_stage_cost"] = step_vf_data["mpc_rewards"]
 
-        info["mpc_computation_time"] = sum([v for k, v in self.control_system.controller.mpc.solver_stats.items() if k.startswith("t_proc")])
+        #info["mpc_computation_time"] = sum([v for k, v in self.control_system.controller.get_mpc().solver_stats.items() if k.startswith("t_proc")])
+        try:
+            info["execution_time"] = self.control_system.controller.history["execution_time"][-1]
+        except KeyError:
+            info["execution_time"] = np.nan
 
         info.update({k: v.astype(np.float64) if hasattr(v, "dtype") else v for k, v in a_dict.items()})
 

@@ -7,6 +7,7 @@ import collections.abc
 from gym_let_mpc.utils import str_replace_whole_words, casadiNNVF, TensorFlowEvaluator
 import casadi
 import copy
+import time
 
 
 def initialize_mpc(model, config, tvp_fun=None, p_fun=None, suppress_IPOPT_output=True, linear_solver="MA27", value_function=None):
@@ -564,7 +565,7 @@ class ETMPC(LMPC):
 
         self.mpc.set_initial_guess()
 
-        self.history.update({"epsilons": [], "state_preds": [], "u_mpc": [], "u_lqr": [], "u_cfs": [], "mpc_compute": []})
+        self.history.update({"epsilons": [], "state_preds": [], "u_mpc": [], "u_lqr": [], "u_cfs": [], "mpc_compute": [], "execution_time": []})
 
     def get_action(self, state, compute_mpc_solution=False, tvp_values=None):  # TODO: This is maybe bad as the name doesnt suggest that it changes the object but it acts closely related to a step function
         if self.steps_since_mpc_computation is None or self.steps_since_mpc_computation >= self.mpc.n_horizon - 1:
@@ -590,6 +591,7 @@ class ETMPC(LMPC):
             self.history["state_preds"].append(np.full_like(self.mpc_state_preds[:, 0, :], np.nan))
             self.history["u_mpc"].append(mpc_optimal_action)
             self.history["u_lqr"].append(np.full_like(mpc_optimal_action, np.nan))
+            self.history["execution_time"].append(sum([v for k, v in self.mpc.solver_stats.items() if k.startswith("t_proc")]))
         else:
             mpc_state_pred = self.mpc_state_preds[:, self.steps_since_mpc_computation + 1]
             if self.lqr_config["model"]["class"] == "linearization" and self.steps_since_mpc_computation == 0:
@@ -599,7 +601,9 @@ class ETMPC(LMPC):
 
             # TODO: get preds and stuff from model?
             epsilon = state_vec - mpc_state_pred
+            exec_time = time.process_time()
             u_lqr = np.array(self.lqr.get_action(epsilon))
+            exec_time = time.process_time() - exec_time
             u_mpc = self._mpc_action_sequence[:, self.steps_since_mpc_computation + 1]
             u_cfs = u_mpc + u_lqr
 
@@ -613,6 +617,7 @@ class ETMPC(LMPC):
             self.history["state_preds"].append(mpc_state_pred)
             self.history["u_mpc"].append(u_mpc)
             self.history["u_lqr"].append(u_lqr)
+            self.history["execution_time"].append(exec_time)
 
             self.steps_since_mpc_computation += 1
 
