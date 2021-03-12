@@ -282,6 +282,7 @@ class LMPC:
 
         self.history = None
         self.extra_render_axes = 0
+        self.n_horizon = self.mpc.n_horizon
 
     def reset(self, state=None, reference=None, constraint=None, tvp=None):
         if reference is not None:
@@ -460,13 +461,16 @@ class LMPC:
 
     def _get_tvp_values(self, t_now):
         tvp_order = sorted(self._tvp_data)
-        for t in range(self.mpc.n_horizon + 1):
+        for t in range(self.n_horizon + 1):
             self._tvp_template["_tvp", t] = np.array([self._tvp_data[k][t] for k in tvp_order])
 
         return self._tvp_template
 
     def _get_p_values(self, t_now):
         raise NotImplementedError
+
+    def get_mpc(self):
+        return self.mpc
 
     def update_reference(self, reference):  # TODO: changing mpc components require setting up new model, thereby throwing away data. Maybe not allow during operation. Change reference to be TVP
         if len(reference) > 0:

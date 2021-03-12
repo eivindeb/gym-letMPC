@@ -282,7 +282,7 @@ class LetMPCEnv(gym.Env):
         #info.update(a_dict)
 
         if self.control_system.controller.mpc_config["objective"].get("vf", None) is not None:
-            mpc = self.control_system.controller.mpc
+            mpc = self.control_system.controller.get_mpc()
             use_p_idxs = []
             for p_i, p_l in enumerate(mpc.model._p.labels()):
                 if "n_horizon" not in p_l:
@@ -404,7 +404,7 @@ class LetMPCEnv(gym.Env):
             else:
                 raise ValueError
         elif var["type"] == "algstate":
-            val = mpc_get_algstate_value(self.control_system.controller.mpc, var["name"])
+            val = mpc_get_algstate_value(self.control_system.controller.get_mpc(), var["name"])
         elif var["type"] == "reference":
             val = self.control_system.controller.current_reference[var["name"]]
         elif var["type"] == "tvp":
@@ -431,7 +431,7 @@ class LetMPCEnv(gym.Env):
                 raise ValueError
         elif var["type"] == "time":
             if var.get("value_type") == "fraction":
-                val = self.control_system.controller.steps_since_mpc_computation / self.control_system.controller.mpc.n_horizon
+                val = self.control_system.controller.steps_since_mpc_computation / self.control_system.controller.get_mpc().n_horizon
             elif var.get("value_type") == "absolute":
                 val = self.control_system.controller.steps_since_mpc_computation
             else:
@@ -442,7 +442,7 @@ class LetMPCEnv(gym.Env):
             else:
                 raise ValueError
         elif var["type"] == "aux":
-            val = mpc_get_aux_value(self.control_system.controller.mpc, var["name"])
+            val = mpc_get_aux_value(self.control_system.controller.get_mpc(), var["name"])
         elif var["type"] == "obj_dist":
             val = self.control_system.controller.get_obj_distance(self.control_system.current_state, int(var["name"].split("_")[1]))
         else:

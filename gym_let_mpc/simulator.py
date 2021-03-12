@@ -300,7 +300,7 @@ class ControlSystem:
             for c_name, constraint in self.controller.constraints.items():
                 if constraint_names == "all" or c_name in constraint_names:
                     if constraint.get("aux", False):
-                        constraint_distance = mpc_get_aux_value(self.controller.mpc, c_name.split("-")[1])
+                        constraint_distance = mpc_get_aux_value(self.controller.get_mpc(), c_name.split("-")[1])
                     else:
                         if constraint["type"] == "_x":
                             constraint_distance = constraint["value"] - self.current_state[constraint["name"]]
