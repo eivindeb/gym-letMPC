@@ -425,6 +425,11 @@ class LetMPCEnv(gym.Env):
     def _get_variable_value(self, var):
         if var["type"] == "state":
             val = self.control_system.current_state[var["name"]]
+        elif var["type"] == "mpc_state":
+            if var.get("value_type", "mpc_computation"):
+                val = self.control_system.history["state"][-(self.control_system.controller.steps_since_mpc_computation + 2)][var["name"]]
+            else:
+                raise ValueError
         elif var["type"] == "input":
             if var.get("value_type", "absolute") == "absolute":
                 val = self.control_system.controller.current_input[var["name"]]
