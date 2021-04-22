@@ -15,7 +15,9 @@ class LetMPCEnv(gym.Env):
     def __init__(self, config_path, config_kw=None):
         def set_config_attrs(parent, kws):
             for attr, val in kws.items():
-                if isinstance(val, dict): #or isinstance(parent[attr], list):
+                if isinstance(parent, dict) and attr not in parent:
+                    parent[attr] = val
+                elif isinstance(val, dict): #or isinstance(parent[attr], list):
                     set_config_attrs(parent[attr], val)
                 else:
                     parent[attr] = val
@@ -47,18 +49,33 @@ class LetMPCEnv(gym.Env):
         assert "randomize" in self.config["environment"]
         assert "state" in self.config["environment"]["randomize"] and "reference" in self.config["environment"]["randomize"]
         assert "render" in self.config["environment"]
-        if config["mpc"]["type"] == "ETMPC":
+        if config["mpc"]["type"] == "ETMPC" or config["mpc"]["type"] == "ETMPCMIX":
             assert len(config["environment"]["action"]["variables"]) == 1 and \
                    config["environment"]["action"]["variables"][0]["name"] == "mpc_compute"
-            controller = ETMPC(config["mpc"], config["lqr"])
-            self.action_space = gym.spaces.Discrete(2)
-        elif config["mpc"]["type"] in ["AHMPC", "TTAHMPC"]:
+            controller = getattr(gym_let_mpc.controllers, config["mpc"]["type"])(config["mpc"], config["lqr"], max_steps=self.max_steps)
+            #self.action_space = gym.spaces.MultiBinary(1)
+            a_low, a_high = [0], [1]
+            for a_i, a_name in enumerate(self.config["mpc"]["model"]["inputs"]):
+                for c_name, c_props in controller.constraints.items():
+                    if c_props["name"] == a_name:
+                        if c_props["constraint_type"] == "lower":
+                            a_low.append(c_props["value"])
+                        else:
+                            a_high.append(c_props["value"])
+                if len(a_low) == a_i:
+                    a_low.append(-np.finfo(np.float32).max)
+                if len(a_high) == a_i:
+                    a_high.append(np.finfo(np.float32).max)
+            self.action_space = gym.spaces.Box(low=np.array(a_low, dtype=np.float32),
+                                               high=np.array(a_high, dtype=np.float32),
+                                               dtype=np.float32)
+        elif config["mpc"]["type"] in ["AHMPC", "TTAHMPC", "TTAHMPCRANGE"]:
             assert len(config["environment"]["action"]["variables"]) == 1 and \
                    config["environment"]["action"]["variables"][0]["name"] == "mpc_horizon"
             if config["mpc"]["type"] == "AHMPC":
                 controller = AHMPC(config["mpc"])
-            elif config["mpc"]["type"] == "TTAHMPC":
-                controller = TTAHMPC(config["mpc"])
+            elif config["mpc"]["type"] in ["TTAHMPC", "TTAHMPCRANGE"]:
+                controller = getattr(gym_let_mpc.controllers, config["mpc"]["type"])(config["mpc"])
                 if "end_on_constraint_violation" not in config["environment"]:
                     config["environment"]["end_on_constraint_violation"] = []
                 for obj_i in range(controller.n_objects):
