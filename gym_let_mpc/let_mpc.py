@@ -488,8 +488,11 @@ class LetMPCEnv(gym.Env):
             if var.get("t", None) is not None:
                 val = self.control_system.controller.history["epsilons"][-var.get("t")][var["name"]]
             else:
-                eps_vec = self.control_system.get_state_vector(self.control_system.current_state).reshape(-1, 1) - self.control_system.controller.mpc_state_preds[:, self.control_system.controller.steps_since_mpc_computation + 1, :]
-                val = self.control_system.get_state_dict(eps_vec)[var["name"]]
+                if var["name"] in self.control_system.state_names:
+                    eps_vec = self.control_system.get_state_vector(self.control_system.current_state).reshape(-1, 1) - self.control_system.controller.mpc_state_preds[:, self.control_system.controller.steps_since_mpc_computation + 1, :]
+                    val = self.control_system.get_state_dict(eps_vec)[var["name"]]
+                else:
+                    val = self.control_system.controller.history["epsilons"][-1][var["name"]]
             if np.isnan(val):
                 val = 0
         elif var["type"] == "constraint":
