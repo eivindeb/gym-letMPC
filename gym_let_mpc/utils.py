@@ -1,6 +1,5 @@
 import numpy as np
 import re
-import tensorflow as tf
 from casadi import *
 import casadi.tools
 
@@ -60,9 +59,9 @@ class OrnsteinUhlenbeckProcess:
         return 'OrnsteinUhlenbeckActionNoise(mu={}, sigma={})'.format(self._mu, self._sigma)
 
 
-
 class TensorFlowEvaluator(casadi.Callback):
     def __init__(self, t_in, t_out, session, opts={}):
+        import tensorflow as tf
         """
           t_in: list of inputs (tensorflow placeholders)
           t_out: list of outputs (tensors dependeant on those placeholders)
