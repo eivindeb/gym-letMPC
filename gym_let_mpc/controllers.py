@@ -133,7 +133,7 @@ def mpc_set_constraints(mpc, constraints, terminal=False):
 
 def mpc_set_scaling(mpc, scaling):
     for s in scaling:
-        mpc.scaling[s["type"], s["state_name"]] = s["value"]
+        mpc.scaling[s["type"], s["name"]] = s["value"]
 
     return mpc
 
@@ -220,8 +220,8 @@ class LQR:
         self._compute_control_law()
 
 
-class LMPC:
-    def __init__(self, mpc_config, mpc_model=None, viewer=None):
+class LMPC:  # TODO: initalize input to some value other than None
+    def __init__(self, mpc_config, mpc_model=None, viewer=None, max_steps=None):
         self.mpc_config = mpc_config
 
         if mpc_model is None:
@@ -246,6 +246,8 @@ class LMPC:
 
         self.value_function = None
         self.viewer = viewer
+        self.max_steps = max_steps
+        self.current_step = None
 
         self.input_names = sorted(mpc_config["model"]["inputs"].keys())
         self.state_names = sorted(mpc_config["model"]["states"].keys())
@@ -312,6 +314,7 @@ class LMPC:
         #self.mpc.set_initial_p_num()
         #self.mpc.calculate_aux_num()
 
+        self.current_step = 0
         self.current_input = {u_name: None for u_name in self.input_names}
         self.history = {"inputs": [copy.deepcopy(self.current_input)], "references": [copy.deepcopy(self.current_reference)],
                         "errors": [self._get_tracking_error(state)],
@@ -405,10 +408,11 @@ class LMPC:
                         tvp_data.extend(self.history["tvp"][mpc_computation_inds[comp_i]][tvp_name][:forecast_i_length])
                 for tvp_name, tvp_lines in self.viewer["tvp_lines"].items():
                     tvp_data_x = np.arange(len(tvp_line_data[tvp_name])) * self.mpc.data.meta_data['t_step']
-                    tvp_lines["forecast"].set_data(tvp_data_x, tvp_line_data[tvp_name])
-                    mpc_computation_markers = mpc_compute + [False] * (
-                            tvp_data_x.shape[0] - len(mpc_compute))
-                    tvp_lines["forecast"].set_markevery(mpc_computation_markers)
+                    if "forecast" in tvp_lines:
+                        tvp_lines["forecast"].set_data(tvp_data_x, tvp_line_data[tvp_name])
+                        mpc_computation_markers = mpc_compute + [False] * (
+                                tvp_data_x.shape[0] - len(mpc_compute))
+                        tvp_lines["forecast"].set_markevery(mpc_computation_markers)
 
             for line_i, (data, line) in enumerate(zip(pred_line_data, self.viewer['mpc_graphics'].pred_lines.full)):
                 mpc_computation_markers = mpc_compute + [False] * (
@@ -564,9 +568,9 @@ class LMPC:
 
 
 class ETMPC(LMPC):
-    def __init__(self, mpc_config, lqr_config, mpc_model=None, viewer=None):
+    def __init__(self, mpc_config, lqr_config, mpc_model=None, viewer=None, max_steps=None):
         assert mpc_config.get("params", {}).get("store_full_solution", False)
-        super().__init__(mpc_config, mpc_model=mpc_model, viewer=viewer)
+        super().__init__(mpc_config, mpc_model=mpc_model, viewer=viewer, max_steps=max_steps)
         self.lqr_config = lqr_config
 
         A, B, Q, R, JA, JB = get_lqr_system(lqr_config, self.mpc_config["params"]["t_step"])
@@ -661,6 +665,7 @@ class ETMPC(LMPC):
         for input_i, input_name in enumerate(self.input_names):
             self.current_input[input_name] = u_cfs[input_i]
 
+        self.current_step += 1
         self.history["inputs"].append(copy.deepcopy(self.current_input))
         self.history["references"].append(copy.deepcopy(self.current_reference))
         self.history["errors"].append(self._get_tracking_error(state))
@@ -680,14 +685,13 @@ class ETMPC(LMPC):
 
         return self.viewer
 
-    def render(self, show=True):
+    def render(self, show=True):  # TODO: render of lqr lines seems to be a bit behind (delayed in x)
         super().render(show=False)
 
         lqr_data = np.array(self.history["u_lqr"])
         lqr_data_x = np.array(list(range(len(self.history["u_lqr"])))) * self.mpc.data.meta_data['t_step']
         for u_i, control_input in enumerate(mpc_model_get_variable_names(self.mpc.model, "_u")):
             self.viewer["lqr_lines"][control_input].set_data(lqr_data_x, lqr_data[:, u_i])
-
         if show:
             self.viewer["fig"].show()
 
