@@ -716,6 +716,102 @@ class ETMPC(LMPC):
 
     # TODO: add support for changing Q and R in MPC and LQR
 
+class ETMPCMIX(ETMPC):  # ET MPC action is et decision and noise (or noise + lqr if not recompute)
+    def get_action(self, state, action, tvp_values=None):
+        assert action.shape[-1] == 2
+        compute_mpc_solution = bool(action.flat[0])
+        if self.steps_since_mpc_computation is None or self.steps_since_mpc_computation >= self.n_horizon - 1:
+            compute_mpc_solution = True
+
+        state_vec = self._get_state_vector(state)
+
+        if tvp_values is not None:
+            for ref_name in self.current_reference:
+                if ref_name in tvp_values:
+                    self.current_reference[ref_name] = tvp_values[ref_name][0]
+
+            if "end" in tvp_values and self.max_steps is not None and self.max_steps - self.current_step < self.n_horizon:
+                end_steps = self.n_horizon - (self.max_steps - self.current_step)
+                tvp_values["end"][-end_steps:] = [1.0] * end_steps
+            self._tvp_data = tvp_values
+
+        if compute_mpc_solution:
+            for t_c in self.mpc_config.get("terminal_constraints", []):
+                if isinstance(t_c["value"], str):
+                    self.mpc.terminal_bounds[t_c["constraint_type"], t_c["name"]] = self._tvp_data[t_c["value"]][-1]
+
+            self.mpc.t0 = len(self.history["mpc_compute"]) * self.mpc.data.meta_data['t_step']
+            mpc_optimal_action = self.mpc.make_step(state_vec)
+            self.mpc_state_preds = mpc_get_solution(self.mpc, states="all")
+            self._mpc_action_sequence = mpc_get_solution(self.mpc, inputs="all")
+
+            u_cfs = mpc_optimal_action + action[1:]
+            self.steps_since_mpc_computation = 0
+
+            self.history["mpc_compute"].append(True)
+            epsilon_dict = self._get_state_dict(np.full_like(self.mpc_state_preds[:, 0, :], np.nan))
+            if self.tvp_props is not None:
+                epsilon_dict.update({name: 0 for name in self.tvp_props})
+            self.history["epsilons"].append(epsilon_dict)
+            self.history["state_preds"].append(np.full_like(self.mpc_state_preds[:, 0, :], np.nan))
+            self.history["u_mpc"].append(mpc_optimal_action)
+            self.history["u_lqr"].append(np.full_like(mpc_optimal_action, np.nan))
+            self.history["execution_time"].append(
+                sum([v for k, v in self.mpc.solver_stats.items() if k.startswith("t_proc")]))
+        else:
+            mpc_state_pred = self.mpc_state_preds[:, self.steps_since_mpc_computation + 1]
+            if self.lqr_config["model"]["class"] == "linearization" and self.steps_since_mpc_computation == 0:
+                operating_point = self._get_state_dict(state_vec)
+                operating_point.update(self._get_input_dict(self._mpc_action_sequence[0, 1, :]))
+                self.lqr.evaluate_linear_model(operating_point)
+
+            # TODO: get preds and stuff from model?
+            epsilon = state_vec - mpc_state_pred
+            exec_time = time.process_time()
+            u_lqr = action[1:]#np.array(self.lqr.get_action(epsilon))
+            exec_time = time.process_time() - exec_time
+            u_mpc = self._mpc_action_sequence[:, self.steps_since_mpc_computation + 1]
+            u_cfs = u_mpc + u_lqr
+
+            self.history["mpc_compute"].append(False)
+            epsilon_dict = self._get_state_dict(epsilon)
+            if self.tvp_props is not None:
+                epsilon_dict.update({name: self._tvp_data[name][0] -
+                                           self.history["tvp"][-(self.steps_since_mpc_computation + 1)][name][
+                                               self.steps_since_mpc_computation + 1]
+                                     for name in self._tvp_data})
+            self.history["epsilons"].append(epsilon_dict)
+            self.history["state_preds"].append(mpc_state_pred)
+            self.history["u_mpc"].append(u_mpc)
+            self.history["u_lqr"].append(u_lqr)
+            self.history["execution_time"].append(exec_time)
+
+            self.steps_since_mpc_computation += 1
+
+        for u_i, u_name in enumerate(self.input_names):
+            if self.mpc_config["model"]["inputs"][u_name].get("noise", None) is not None:
+                noise = self.mpc_config["model"]["inputs"][u_name]["noise"]
+                u_cfs[u_i] += getattr(np.random, noise["type"])(**noise["kw"])
+            if "clin-{}-u".format(u_name) in self.constraints:
+                u_cfs[u_i] = min(u_cfs[u_i], self.constraints["clin-{}-u".format(u_name)]["value"])
+            if "clin-{}-l".format(u_name) in self.constraints:
+                u_cfs[u_i] = max(u_cfs[u_i], self.constraints["clin-{}-l".format(u_name)]["value"])
+
+        self.history["u_cfs"].append(u_cfs)
+
+        for input_i, input_name in enumerate(self.input_names):
+            self.current_input[input_name] = u_cfs[input_i]
+
+        self.current_step += 1
+        self.history["inputs"].append(copy.deepcopy(self.current_input))
+        self.history["references"].append(copy.deepcopy(self.current_reference))
+        self.history["errors"].append(self._get_tracking_error(state))
+        self.history["tvp"].append(self._tvp_data)
+
+        return u_cfs
+
+
+
 
 class AHMPC(LMPC):
     def __init__(self, mpc_config, mpc_model=None, viewer=None):  # TODO: maybe ensure u_t>hend = 0 by constraints or cost
