@@ -90,12 +90,14 @@ class LetMPCEnv(gym.Env):
         self.steps_count = None
         self.np_random = None
         self.min_constraint_delta = 0.25  # TODO: how and where to set
+        self.obs_module_idxs = []
 
         def get_observation_space(vars):
             obs_high = []
             obs_low = []
             for obs_var in vars:
                 for var_transform in obs_var.get("transform", ["none"]):
+                    self.obs_module_idxs.append(obs_var.get("module", "et"))
                     for lim_i, lim in enumerate(obs_var.get("limits", [None, None])):
                         if lim is None:
                             if lim_i == 0:
