@@ -254,7 +254,9 @@ class LetMPCEnv(gym.Env):
                                   model=sampled_model, process_noise=process_noise, tvp=tvp)
         if self.config["mpc"]["type"] == "ETMPC":
             self.control_system.step(action=np.array([1]))
-        elif self.config["mpc"]["type"] in ["AHMPC", "TTAHMPC"]:
+        elif self.config["mpc"]["type"] == "ETMPCMIX":
+            self.control_system.step(action=np.array([1] + [0 for i in range(len(self.control_system.controller.input_names))]))
+        elif self.config["mpc"]["type"] in ["AHMPC", "TTAHMPC", "TTAHMPCRANGE"]:
             self.control_system.step(action=np.array(self.config["mpc"]["params"]["n_horizon"]))
         obs = self.get_observation()
         self.history = {"obs": [obs], "actions": [], "rewards": []}
@@ -269,6 +271,8 @@ class LetMPCEnv(gym.Env):
         if self.config["mpc"]["type"] == "ETMPC":
             a_dict = {"mpc_compute": action}#round(action)}
             action = a_dict["mpc_compute"]
+        elif self.config["mpc"]["type"] == "ETMPCMIX":
+            a_dict = {"mpc_compute": action.flat[0], "lqr_noise": action.flat[1:]}
         elif self.config["mpc"]["type"] in ["AHMPC", "TTAHMPC", "TTAHMPCRANGE"]:
             a_dict = {a_props["name"]: np.round(action).astype(np.int32)
                       for a_i, a_props in enumerate(self.config["environment"]["action"]["variables"])}
