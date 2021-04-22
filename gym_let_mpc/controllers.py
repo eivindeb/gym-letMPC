@@ -658,6 +658,9 @@ class ETMPC(LMPC):
             self.steps_since_mpc_computation += 1
 
         for u_i, u_name in enumerate(self.input_names):
+            if self.mpc_config["model"]["inputs"][u_name].get("noise", None) is not None:
+                noise = self.mpc_config["model"]["inputs"][u_name]["noise"]
+                u_cfs[u_i] += getattr(np.random, noise["type"])(**noise["kw"])
             if "clin-{}-u".format(u_name) in self.constraints:
                 u_cfs[u_i] = min(u_cfs[u_i], self.constraints["clin-{}-u".format(u_name)]["value"])
             if "clin-{}-l".format(u_name) in self.constraints:
