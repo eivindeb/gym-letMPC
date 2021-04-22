@@ -595,18 +595,21 @@ class ETMPC(LMPC):
         if self.steps_since_mpc_computation is None or self.steps_since_mpc_computation >= self.mpc.n_horizon - 1:
             compute_mpc_solution = True
 
-        for ref_name in self.current_reference:
-            if ref_name in tvp_values:
-                self.current_reference[ref_name] = tvp_values[ref_name][0]
-
         state_vec = self._get_state_vector(state)
-        self._tvp_data = tvp_values
+        if tvp_values is not None:
+            for ref_name in self.current_reference:
+                if ref_name in tvp_values:
+                    self.current_reference[ref_name] = tvp_values[ref_name][0]
 
+            if "end" in tvp_values and self.max_steps is not None and self.max_steps - self.current_step < self.n_horizon:
+                end_steps = self.n_horizon - (self.max_steps - self.current_step)
+                tvp_values["end"][-end_steps:] = [1.0] * end_steps
+            self._tvp_data = tvp_values
 
         if compute_mpc_solution:
             for t_c in self.mpc_config.get("terminal_constraints", []):
                 if isinstance(t_c["value"], str):
-                    self.mpc.terminal_bounds[t_c["constraint_type"], t_c["name"]] = tvp_values[t_c["value"]][-1]
+                    self.mpc.terminal_bounds[t_c["constraint_type"], t_c["name"]] = self._tvp_data[t_c["value"]][-1]
 
             self.mpc.t0 = len(self.history["mpc_compute"]) * self.mpc.data.meta_data['t_step']
             mpc_optimal_action = self.mpc.make_step(state_vec)
