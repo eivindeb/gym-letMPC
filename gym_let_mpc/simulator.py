@@ -38,10 +38,12 @@ class TVP:
             if prop_name == "forecast" and forecast_props is None:
                 continue
             for component in props:
-                self.generators[prop_name].append({"redraw_probability": component.get("redraw_probability", 1),
-                                                "forecast_aware": component.get("forecast_aware", True),
-                                                "starts_at": component.get("starts_at", 0),
-                                                "distribution": self.create_generator(component["type"], component["kw"])})
+                cp = {"distribution": self.create_generator(component.pop("type"), component.pop("kw")),
+                      "forecast_aware": component.get("forecast_aware", True), "starts_at": component.pop("starts_at", 0)}
+                cp.update(**component)
+                if "redraw_every" not in cp and "redraw_probability" not in cp:
+                    cp.update({"redraw_probability": component.get("redraw_probability", 1)})
+                self.generators[prop_name].append(cp)
 
     def reset(self):
         for gen_type in ["true", "forecast"]:
@@ -68,7 +70,11 @@ class TVP:
             for gen_type in ["true", "forecast"]:
                 if gen_type in self.generators:
                     for comp_i, component in enumerate(self.generators[gen_type]):
-                        if len(self.values) == 0 or (component.get("redraw_probability", 0) > 0 and len(self.values) % int(1 / component["redraw_probability"]) == 0):# self.np_random.uniform() <= component["redraw_probability"]:
+                        if self.name == "x1_r":
+                            step_val[gen_type].append(component["distribution"](len(self.values)))
+                        elif (component.get("draw_max", None) is None or component["draw_max"] > len(self.values)) and (len(self.values) == 0 or
+                                ((component.get("redraw_every", 0) > 0 and len(self.values) % component["redraw_every"] == 0)
+                                or (component.get("redraw_probability", 0) > 0 and self.np_random.uniform() <= component["redraw_probability"]))):
                             step_val[gen_type].append(component["distribution"]())
                         else:
                             step_val[gen_type].append(self.values[-1][gen_type][comp_i])
@@ -200,7 +206,8 @@ class ControlSystem:
 
         if tvp is not None:
             for name, vals in tvp.items():
-                self.tvps[name].values = vals
+                if name in self.tvps:
+                    self.tvps[name].values = vals
         elif self.tvps is not None:
             for tvp in self.tvps.values():
                 tvp.reset()
