@@ -542,17 +542,23 @@ class LetMPCEnv(gym.Env):
         elif var["type"] == "reference":
             val = self.control_system.controller.current_reference[var["name"]]
         elif var["type"] == "tvp":
-            val = self.control_system.tvps[var["name"]].get_values(self.steps_count)
+            val = self.control_system.tvps[var["name"]].get_values(self.steps_count + var.get("index", 0))
         elif var["type"] == "error":
             val = self.control_system.controller.history["errors"][-1][var["name"]]
             if np.isnan(val):
                 val = 0
+        elif var["type"] == "eps": # TODO: remove (test stuff)
+            val = self.control_system.current_state[var["name"]] - self.control_system.controller._tvp_data[var["name"] + "_r"][0]
         elif var["type"] == "epsilon":  #TODO: ensure newest epsilon (i.e. from applying recompute/not recompute)
             if var.get("t", None) is not None:
                 val = self.control_system.controller.history["epsilons"][-var.get("t")][var["name"]]
             else:
                 if var["name"] in self.control_system.state_names:
-                    eps_vec = self.control_system.get_state_vector(self.control_system.current_state).reshape(-1, 1) - self.control_system.controller.mpc_state_preds[:, self.control_system.controller.steps_since_mpc_computation + 1, :]
+                    if self.control_system.controller.steps_since_mpc_computation + 1 < self.control_system.controller.mpc_state_preds.shape[1]:
+                        pred = self.control_system.controller.mpc_state_preds[:, self.control_system.controller.steps_since_mpc_computation + 1, :]
+                    else:
+                        pred = self.control_system.controller.get_lqr_steady_state().reshape(-1, 1)
+                    eps_vec = self.control_system.get_state_vector(self.control_system.current_state).reshape(-1, 1) - pred
                     val = self.control_system.get_state_dict(eps_vec)[var["name"]]
                 else:
                     val = self.control_system.controller.history["epsilons"][-1][var["name"]]
@@ -566,14 +572,16 @@ class LetMPCEnv(gym.Env):
         elif var["type"] == "action":
             if var.get("value_type", "agent") == "agent":
                 val = self.history["actions"][-1][var["name"]]
-            elif var.get("value_type") == "controller":
+            elif var.get("value_type", "agent") == "controller":
                 val = self.control_system.controller.history[var["name"]][-1]
+            elif var.get("value_type", "agent") == "mpc_computation":
+                val = self.control_system.controller.history[var["name"]][-(self.control_system.controller.steps_since_mpc_computation + 1)]
             else:
                 raise ValueError
         elif var["type"] == "time":
             if var.get("value_type") == "fraction":
                 val = self.control_system.controller.steps_since_mpc_computation / self.control_system.controller.get_mpc().n_horizon
-            elif var.get("value_type") == "absolute":
+            elif var.get("value_type") == "absolute":  # TODO: Is this correct? it seems like it caps perhaps?
                 val = self.control_system.controller.steps_since_mpc_computation
             else:
                 raise ValueError
