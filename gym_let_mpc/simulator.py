@@ -55,6 +55,8 @@ class TVP:
         self.values = []
 
     def create_generator(self, type, gen_kw):
+        if type == "sinusoidal":
+            return lambda t: np.sin(t / (4 * np.pi))
         if type == "OU":
             return OrnsteinUhlenbeckProcess(**gen_kw)
         if type == "constant":
