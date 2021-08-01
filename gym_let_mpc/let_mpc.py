@@ -621,7 +621,10 @@ class LetMPCEnv(gym.Env):
     def sample_state(self):
         state = {}
         for s_name, s_props in self.config["environment"].get("randomize", {}).get("state", {}).items():
-            state[s_name] = getattr(self.np_random, s_props["type"])(**s_props["kw"])
+            if s_props["type"] == "constant":
+                state[s_name] = s_props["value"]
+            else:
+                state[s_name] = getattr(self.np_random, s_props["type"])(**s_props["kw"])
 
         return state
 
@@ -687,6 +690,35 @@ class LetMPCEnv(gym.Env):
         """
         assert self.control_system.controller.mpc_config["objective"].get("vf", None) is not None
         self.control_system.controller.update_mpc_params({"use_nn_vf": status})
+
+    def get_lqr(self):
+        return self.control_system.controller.lqr
+
+    def update_lqr(self, **components):
+        assert hasattr(self.control_system.controller, "lqr")
+        self.control_system.controller.lqr.update_component(**components)
+
+    def set_action_noise_properties(self, properties):
+        if isinstance(properties, dict):
+            for u_name, u_kw in properties.items():
+                self.control_system.controller.mpc_config["model"]["inputs"][u_name]["noise"]["kw"].update(u_kw)
+        elif isinstance(properties, list):
+            for u_i, u_name in enumerate(self.control_system.controller.input_names):
+                self.control_system.controller.mpc_config["model"]["inputs"][u_name]["noise"]["kw"].update(properties[u_i])
+        else:
+            raise ValueError("Properties must either be a dictionary with key input name and value input kws, or a list of input kws where order is taken from controller.input_names")
+
+    def get_linearized_mpc_model_over_prediction(self):  # TODO: should depend on n_horizon (when using AHMPC with weights)
+        if self.config["mpc"]["type"] == "LQRMPC" and self.config["lqr"].get("type", "time-invariant") == "time-varying":  # TODO: remove (test stuff)
+            As, Bs = [], []
+            x1_r = self.control_system.controller._tvp_data["x1_r"][1:]
+            for i in range(10):
+                system = self.control_system.controller.mpc.get_linearized_model_at(np.array([x1_r[i], 0]), np.array([0]))
+                As.append(system[0])
+                Bs.append(system[1])
+            return As, Bs
+        else:
+            return self.control_system.controller.mpc.get_linearized_model_over_prediction()
 
 
 if __name__ == "__main__":  # TODO: constraints on pendulum and end episode if constraints violated
