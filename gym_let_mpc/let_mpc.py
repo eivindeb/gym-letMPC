@@ -33,14 +33,15 @@ class LetMPCEnv(gym.Env):
         elif config["mpc"]["model"].get("parameters", None) == "plant":
             config["mpc"]["model"]["parameters"] = copy.deepcopy(config["plant"]["model"]["parameters"])
 
-        if config["lqr"]["model"] == "plant":
-            config["lqr"]["model"] = copy.deepcopy(config["plant"]["model"])
-        elif config["lqr"]["model"] == "mpc":
-            config["lqr"]["model"] = copy.deepcopy(config["mpc"]["model"])
-        elif config["lqr"]["model"].get("parameters", None) == "plant":
-            config["lqr"]["model"]["parameters"] = copy.deepcopy(config["plant"]["model"]["parameters"])
-        elif config["lqr"]["model"].get("parameters", None) == "mpc":
-            config["lqr"]["model"]["parameters"] = copy.deepcopy(config["mpc"]["model"]["parameters"])
+        if "lqr" in config:
+            if config["lqr"]["model"] == "plant":
+                config["lqr"]["model"] = copy.deepcopy(config["plant"]["model"])
+            elif config["lqr"]["model"] == "mpc":
+                config["lqr"]["model"] = copy.deepcopy(config["mpc"]["model"])
+            elif config["lqr"]["model"].get("parameters", None) == "plant":
+                config["lqr"]["model"]["parameters"] = copy.deepcopy(config["plant"]["model"]["parameters"])
+            elif config["lqr"]["model"].get("parameters", None) == "mpc":
+                config["lqr"]["model"]["parameters"] = copy.deepcopy(config["mpc"]["model"]["parameters"])
 
         self.config = config
         assert "max_steps" in self.config["environment"]
