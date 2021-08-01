@@ -50,12 +50,15 @@ class LetMPCEnv(gym.Env):
         assert "randomize" in self.config["environment"]
         assert "state" in self.config["environment"]["randomize"] and "reference" in self.config["environment"]["randomize"]
         assert "render" in self.config["environment"]
-        if config["mpc"]["type"] == "ETMPC" or config["mpc"]["type"] == "ETMPCMIX":
-            assert len(config["environment"]["action"]["variables"]) == 1 and \
-                   config["environment"]["action"]["variables"][0]["name"] == "mpc_compute"
+        if config["mpc"]["type"] in ["ETMPC", "ETMPCMIX", "AHETMPCMIX"]:
+            #assert len(config["environment"]["action"]["variables"]) == 1 and \
+            #       config["environment"]["action"]["variables"][0]["name"] == "mpc_compute"
             controller = getattr(gym_let_mpc.controllers, config["mpc"]["type"])(config["mpc"], config["lqr"], max_steps=self.max_steps)
             #self.action_space = gym.spaces.MultiBinary(1)
             a_low, a_high = [0], [1]
+            if config["mpc"]["type"] == "AHETMPCMIX":
+                a_low.append(1)
+                a_high.append(config["mpc"]["params"]["n_horizon"])
             for a_i, a_name in enumerate(self.config["mpc"]["model"]["inputs"]):
                 for c_name, c_props in controller.constraints.items():
                     if c_props["name"] == a_name:
@@ -83,7 +86,24 @@ class LetMPCEnv(gym.Env):
                     config["environment"]["end_on_constraint_violation"].append("obj_{}_distance".format(obj_i))
             else:
                 raise ValueError
-            self.action_space = gym.spaces.Box(low=np.array([1]), high=np.array([50]), dtype=np.float32)
+            self.action_space = gym.spaces.Box(low=np.array([1]), high=np.array([config["mpc"]["params"]["n_horizon"]]), dtype=np.float32)
+        elif "LQR" in config["mpc"]["type"]:  # TODO: remove this test stuff
+            controller = getattr(gym_let_mpc.controllers, config["mpc"]["type"])(config["mpc"], config["lqr"])
+            a_low, a_high = [], []
+            for a_i, a_name in enumerate(self.config["mpc"]["model"]["inputs"]):
+                for c_name, c_props in controller.constraints.items():
+                    if c_props["name"] == a_name:
+                        if c_props["constraint_type"] == "lower":
+                            a_low.append(c_props["value"])
+                        else:
+                            a_high.append(c_props["value"])
+                if len(a_low) == a_i:
+                    a_low.append(-np.finfo(np.float32).max)
+                if len(a_high) == a_i:
+                    a_high.append(np.finfo(np.float32).max)
+            self.action_space = gym.spaces.Box(low=np.array(a_low, dtype=np.float32),
+                                               high=np.array(a_high, dtype=np.float32),
+                                               dtype=np.float32)
         else:
             raise ValueError
         self.control_system = ControlSystem(config["plant"], controller=controller)
@@ -173,6 +193,8 @@ class LetMPCEnv(gym.Env):
                     d[k] = v
             return d
 
+        self.steps_count = 0
+
         sampled_state = self.sample_state()
         sampled_reference = self.sample_reference()
         sampled_constraint = self.sample_constraints()
@@ -254,14 +276,26 @@ class LetMPCEnv(gym.Env):
         self.control_system.reset(state=sampled_state, reference=sampled_reference, constraint=sampled_constraint,
                                   model=sampled_model, process_noise=process_noise, tvp=tvp)
         if self.config["mpc"]["type"] == "ETMPC":
-            self.control_system.step(action=np.array([1]))
+            actions = {"mpc_compute": True}
+            self.control_system.step(action=np.array([actions["mpc_compute"]]))
         elif self.config["mpc"]["type"] == "ETMPCMIX":
-            self.control_system.step(action=np.array([1] + [0 for i in range(len(self.control_system.controller.input_names))]))
+            actions = {"mpc_compute": True, "lqr": [0 for i in range(len(self.control_system.controller.input_names))]}
+            self.control_system.step(action=np.array([actions["mpc_compute"] + actions["lqr"]]))
+        elif self.config["mpc"]["type"] == "AHETMPCMIX":
+            actions = {"mpc_compute": True, "mpc_horizon": self.config["mpc"]["params"]["n_horizon"], "lqr": [0 for i in range(len(self.control_system.controller.input_names))]}
+            self.control_system.step(action=np.array([actions["mpc_compute"], actions["mpc_horizon"]] + actions["lqr"]))
         elif self.config["mpc"]["type"] in ["AHMPC", "TTAHMPC", "TTAHMPCRANGE"]:
-            self.control_system.step(action=np.array(self.config["mpc"]["params"]["n_horizon"]))
+            actions = {"mpc_horizon": self.config["mpc"]["params"]["n_horizon"]}
+            self.control_system.step(action=np.array([actions["mpc_horizon"]]))
+        elif self.config["mpc"]["type"] in ["LQRETMPC", "LQRFHFNMPC"]:  # TODO remove test
+            actions = {"lqr": [0 for i in range(len(self.control_system.controller.input_names))]}
+            self.control_system.step(action=np.array(actions["lqr"]))
+        elif self.config["mpc"]["type"] == "LQRMPC":
+            actions = {"lqr": [0 for i in range(len(self.control_system.controller.input_names))]}
+            self.control_system.step(action=np.array(actions["lqr"]))
+        #self.history["actions"].append(actions)
         obs = self.get_observation()
         self.history = {"obs": [obs], "actions": [], "rewards": []}
-        self.steps_count = 0
 
         return obs
 
@@ -270,26 +304,33 @@ class LetMPCEnv(gym.Env):
         if isinstance(action, np.ndarray) and len(action.shape) > 1:
             action = action[0, :]
         if self.config["mpc"]["type"] == "ETMPC":
-            a_dict = {"mpc_compute": action}#round(action)}
+            a_dict = {"mpc_compute": action[0]}#round(action)}
             action = a_dict["mpc_compute"]
         elif self.config["mpc"]["type"] == "ETMPCMIX":
             a_dict = {"mpc_compute": action.flat[0], "lqr_noise": action.flat[1:]}
+        elif self.config["mpc"]["type"] == "AHETMPCMIX":
+            a_dict = {"mpc_compute": action.flat[0], "mpc_horizon": action.flat[1], "lqr_noise": action.flat[2:]}
         elif self.config["mpc"]["type"] in ["AHMPC", "TTAHMPC", "TTAHMPCRANGE"]:
+            #action = np.clip(action, -1, 1)
+            #action = np.array(50 - 1) * (action - (-1)) / (1 - (-1)) + 1
             a_dict = {a_props["name"]: np.round(action).astype(np.int32)
                       for a_i, a_props in enumerate(self.config["environment"]["action"]["variables"])}
             action = a_dict["mpc_horizon"]
-        elif self.config["mpc"]["type"] == "LQRMPC":  # TODO: remove this test stuff
+        elif self.config["mpc"]["type"] in ["LQRMPC", "LQRFHFNMPC"]:  # TODO: remove this test stuff
             a_dict = {"lqr": action[0]}
-            pass
         elif self.config["mpc"]["type"] == "LQRETMPC":
-            a_dict = {"mpc_compute": action[0], "lqr": action[1:]}
+            a_dict = {"mpc_compute": False, "lqr": action}#{"mpc_compute": action[0], "lqr": action[1:]}
+            #action = np.atleast_1d(action)
         else:
             raise ValueError
         self.control_system.step(action)#np.atleast_1d(int(a_dict["mpc_compute"])))
+        info  = {}
+        #if self.config["mpc"]["type"] in ["LQRETMPC", "ETMPC"] and self.control_system.controller.steps_since_mpc_computation >= 10:
+        #    self.control_system.controller.get_action(self.control_system.current_state, np.array([True]))
         self.history["actions"].append(a_dict)
         self.steps_count += 1
 
-        info = {}
+       # info = {}
         obs = self.get_observation()
         done = False
         additional_rew = 0
@@ -371,6 +412,27 @@ class LetMPCEnv(gym.Env):
             info["execution_time"] = np.nan
 
         info.update({k: v.astype(np.float64) if hasattr(v, "dtype") else v for k, v in a_dict.items()})
+        #if self.config["mpc"]["type"] == "LQRETMPC":
+        #    info["action"] = self.control_system.controller.history["u_cfs"][-1]
+
+        if False and self.config["mpc"]["type"] in ["ETMPC", "LQRETMPC"]:
+            info["mpc_action"] = np.squeeze(self.control_system.controller.history["u_mpc"][-1], axis=0)
+            if self.control_system.controller.steps_since_mpc_computation > 0:  # get unconstrained action  # TODO: how to handle end of horizon recompute?
+                info["action"] = info["mpc_action"] + np.squeeze(self.control_system.controller.history["u_lqr"][-1], axis=0)
+            else:
+                if not a_dict["mpc_compute"] and not any(self.control_system.controller.history["mpc_compute"][-10:-1]):  # TODO: change to horizon
+                    info["eoh_flag"] = True
+                #elif not a_dict["mpc_compute"]:
+                #    print("what")
+                info["action"] = info["mpc_action"]
+        if self.config["mpc"]["type"] in ["ETMPCMIX", "AHETMPCMIX", "LQRETMPC", "LQRFHFNMPC"] and self.control_system.controller.lqr_config["type"] == "time-varying":
+            if self.control_system.controller.steps_since_mpc_computation == 0:
+                As, Bs = self.get_linearized_mpc_model_over_prediction()
+                info["As"] = As
+                info["Bs"] = Bs
+        if self.config["mpc"]["type"] == "LQRMPC" and self.config["lqr"].get("type", "time-invariant") == "time-varying":
+            info["As"] = self.control_system.controller.lqr.A
+            info["Bs"] = self.control_system.controller.lqr.B
 
         self.history["obs"].append(obs)
         self.history["rewards"].append(rew)
