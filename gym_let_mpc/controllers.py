@@ -280,6 +280,7 @@ class LMPC:  # TODO: initalize input to some value other than None
         self.current_reference = {r_name: 0 for r_name in
                                   self.reference_names}
 
+        self._mpc = None
         self._initialize_mpc(mpc_model=mpc_model)
 
         if tvp_fun is not None:
@@ -308,6 +309,15 @@ class LMPC:  # TODO: initalize input to some value other than None
         self.history = None
         self.extra_render_axes = 0
         self.n_horizon = self.mpc.n_horizon
+        self.steps_since_mpc_computation = None
+
+    @property
+    def mpc(self):
+        return self._mpc
+
+    @mpc.setter
+    def mpc(self, value):
+        self._mpc = value
 
     def reset(self, state=None, reference=None, constraint=None, tvp=None):
         if reference is not None:
