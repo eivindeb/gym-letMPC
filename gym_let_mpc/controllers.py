@@ -181,8 +181,12 @@ class LQR:
         if self.A is not None and self.B is not None:
             self._compute_control_law()
 
-    def get_action(self, x):
-        return (-self.K * x).A
+    def get_action(self, x, t=None):
+        if t is not None:
+            assert isinstance(self.K, list)
+            return (-self.K[t if t < len(self.K) else -1] @ x).A
+        else:
+            return (-self.K @ x).A
 
     def _compute_control_law(self):  # TODO: supress pending deprecated warnings about matrix
         """Solve the continuous time lqr controller.
@@ -195,18 +199,37 @@ class LQR:
         # ref Bertsekas, p.151
 
         # first, try to solve the ricatti equation
-        self.S = np.matrix(scipy.linalg.solve_discrete_are(self.A, self.B, self.Q, self.R))
+        if isinstance(self.A, list):
+            assert isinstance(self.B, list) and len(self.A) == len(self.B)
+            self.S, self.K = [], []
+            for i in reversed(range(len(self.A))):
+                if i == len(self.A) - 1:
+                    self.S.append(np.matrix(scipy.linalg.solve_discrete_are(self.A[i], self.B[i], self.Q, self.R)))
+                else:
+                    self.S.append(self.Q + self.A[i].T @ self.S[-1] @ self.A[i] - self.A[i].T @ self.S[-1] @ self.B[i] @ scipy.linalg.inv(self.R + self.B[i].T @ self.S[-1] @ self.B[i]) @ self.B[i].T @ self.S[-1] @ self.A[i])
+                self.K.append(self._calculate_gain_matrix(self.A[i], self.B[i], self.R, self.S[-1]))
 
-        # compute the LQR gain
-        #self.K = np.matrix(scipy.linalg.inv(np.atleast_2d(self.R)) * (self.B.T * self.S))
-        self.K = np.matrix(scipy.linalg.inv(np.atleast_2d(self.B.T * self.S * self.B + self.R)) * self.B.T * self.S * self.A)
+            self.S = list(reversed(self.S))
+            self.K = list(reversed(self.K))
+        else:
+            self.S = np.matrix(scipy.linalg.solve_discrete_are(self.A, self.B, self.Q, self.R))
 
-        self.E, eigVecs = scipy.linalg.eig(self.A - self.B * self.K)
+            # compute the LQR gain
+            #self.K = np.matrix(scipy.linalg.inv(np.atleast_2d(self.R)) * (self.B.T * self.S))
+            self.K = self._calculate_gain_matrix(self.A, self.B, self.R, self.S)
+
+            self.E, eigVecs = scipy.linalg.eig(self.A - self.B * self.K)
+
+    def _calculate_gain_matrix(self, A, B, R, S):
+        return np.matrix(scipy.linalg.inv(np.atleast_2d(B.T @ S @ B + R)) @ B.T @ S @ A)  # TODO: verify if should be @ or *
 
     def update_component(self, **kwargs):
         assert len(kwargs) > 0
         self.__dict__.update(**kwargs)
         self._compute_control_law()
+
+    def set_numeric_value(self, kwargs):
+        self.update_component(**kwargs)
 
     def evaluate_linear_model(self, operating_point):
         expr_JA, expr_JB = str(self.JA).replace("\'", ""), str(self.JB).replace("\'", "")
