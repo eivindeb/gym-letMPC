@@ -617,7 +617,21 @@ class ETMPC(LMPC):
         super().__init__(mpc_config, mpc_model=mpc_model, viewer=viewer, max_steps=max_steps)
         self.lqr_config = lqr_config
 
-        A, B, Q, R, JA, JB = get_lqr_system(lqr_config, self.mpc_config["params"]["t_step"])
+        if lqr_config["model"]["class"] == "mpc_linearization":
+            A, B = self.mpc.get_linearized_model_at(np.zeros((self.mpc.model.x.shape[0], 1)), np.zeros((self.mpc.model.u.shape[0], 1)))
+            #if lqr_config["objective"] == "mpc_linearization":
+            #    Q, R = self.mpc.get_objective_quadratic_approximation()
+            #else:
+            Q = np.array(lqr_config["objective"]["Q"])
+            R = np.array(lqr_config["objective"]["R"])
+            JA, JB = None, None
+        else:
+            A, B, Q, R, JA, JB = get_lqr_system(lqr_config, self.mpc_config["params"]["t_step"])
+
+        if lqr_config.get("type", "time-invariant") == "time-varying":
+            A = [A for i in range(self.mpc.n_horizon)]
+            B = [B for i in range(self.mpc.n_horizon)]
+
         self.lqr = LQR(A, B, Q, R, JA, JB)
 
         self.steps_since_mpc_computation = None
@@ -628,8 +642,8 @@ class ETMPC(LMPC):
         self.mpc_state_preds = None
         self._mpc_action_sequence = None
 
-        if self.lqr_config["model"]["class"] == "linear":
-            self.mpc.u0 = self.lqr.get_action(self._get_state_vector(state))
+        #if self.lqr_config["model"]["class"] == "linear":
+        #    self.mpc.u0 = self.lqr.get_action(self._get_state_vector(state))
 
         self.mpc.set_initial_guess()
 
@@ -662,6 +676,10 @@ class ETMPC(LMPC):
 
             u_cfs = mpc_optimal_action
             self.steps_since_mpc_computation = 0
+            if self.lqr_config.get("type", "time-invariant") == "time-varying" and self.lqr_config["model"]["class"] == "mpc_linearization":
+                As, Bs = self.mpc.get_linearized_model_over_prediction()
+                #Q, R = self.mpc.get_objective_quadratic_approximation()
+                self.lqr.update_component(A=As, B=Bs)
 
             self.history["mpc_compute"].append(True)
             epsilon_dict = self._get_state_dict(np.full_like(self.mpc_state_preds[:, 0, :], np.nan))
@@ -682,7 +700,7 @@ class ETMPC(LMPC):
             # TODO: get preds and stuff from model?
             epsilon = state_vec - mpc_state_pred
             exec_time = time.process_time()
-            u_lqr = np.array(self.lqr.get_action(epsilon))
+            u_lqr = np.array(self.lqr.get_action(epsilon))#, t=self.steps_since_mpc_computation + 1))
             exec_time = time.process_time() - exec_time
             u_mpc = self._mpc_action_sequence[:, self.steps_since_mpc_computation + 1]
             u_cfs = u_mpc + u_lqr
@@ -758,13 +776,29 @@ class ETMPC(LMPC):
         A, B, Q, R = get_lqr_system(self.lqr_config)
         self.lqr.update_component(A=A, B=B)
 
+    def get_lqr_steady_state(self):
+        assert "steady_state" in self.lqr_config
+        state = []
+        for state_name in self.state_names:
+            if isinstance(self.lqr_config["steady_state"][state_name], str):
+                if self.lqr_config["steady_state"][state_name].endswith("_r"):
+                    state.append(self.current_reference[self.lqr_config["steady_state"][state_name]])
+                else:
+                    raise ValueError
+            else:
+                state.append(self.lqr_config["steady_state"][state_name])
+
+        return np.array(state)
+
     # TODO: add support for changing Q and R in MPC and LQR
+
 
 class ETMPCMIX(ETMPC):  # ET MPC action is et decision and noise (or noise + lqr if not recompute)
     def get_action(self, state, action, tvp_values=None):
         assert action.shape[-1] == 2
         compute_mpc_solution = bool(action.flat[0])
-        if self.steps_since_mpc_computation is None or self.steps_since_mpc_computation >= self.n_horizon - 1:
+        if self.steps_since_mpc_computation is None or ("steady-state" not in self.lqr_config and
+                                                        self.steps_since_mpc_computation >= self.n_horizon - 1):
             compute_mpc_solution = True
 
         state_vec = self._get_state_vector(state)
@@ -803,7 +837,13 @@ class ETMPCMIX(ETMPC):  # ET MPC action is et decision and noise (or noise + lqr
             self.history["execution_time"].append(
                 sum([v for k, v in self.mpc.solver_stats.items() if k.startswith("t_proc")]))
         else:
-            mpc_state_pred = self.mpc_state_preds[:, self.steps_since_mpc_computation + 1]
+            if self.steps_since_mpc_computation + 1 < self.mpc_state_preds.shape[1]:
+                mpc_state_pred = self.mpc_state_preds[:, self.steps_since_mpc_computation + 1]
+                u_mpc = self._mpc_action_sequence[:, self.steps_since_mpc_computation + 1]
+            else:
+                mpc_state_pred = self.get_lqr_steady_state()
+                u_mpc = 0
+
             if self.lqr_config["model"]["class"] == "linearization" and self.steps_since_mpc_computation == 0:
                 operating_point = self._get_state_dict(state_vec)
                 operating_point.update(self._get_input_dict(self._mpc_action_sequence[0, 1, :]))
@@ -814,7 +854,6 @@ class ETMPCMIX(ETMPC):  # ET MPC action is et decision and noise (or noise + lqr
             exec_time = time.process_time()
             u_lqr = action[1:]#np.array(self.lqr.get_action(epsilon))
             exec_time = time.process_time() - exec_time
-            u_mpc = self._mpc_action_sequence[:, self.steps_since_mpc_computation + 1]
             u_cfs = u_mpc + u_lqr
 
             self.history["mpc_compute"].append(False)
