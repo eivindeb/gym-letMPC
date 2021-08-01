@@ -1553,17 +1553,21 @@ class AHMPCOLD(LMPC):
         return super().configure_viewer(viewer=viewer, plot_prediction=False)
 
     def _get_p_values(self, t):
+        if len(self.history["mpc_horizon"]) == 0:
+            step_n_horizon = self.mpc_config["params"]["n_horizon"]
+        else:
+            step_n_horizon = self.history["mpc_horizon"][-1]
         for p_label in self._p_template.labels():
             p_name = p_label.split(",")[2]
             if p_name == "n_horizon":
-                if len(self.history["mpc_horizon"]) == 0:
-                    self._p_template["_p", 0, p_name] = self.mpc_config["params"]["n_horizon"]
-                else:
-                    self._p_template["_p", 0, p_name] = self.history["mpc_horizon"][-1]
+                self._p_template["_p", 0, p_name] = step_n_horizon
             elif "_r" in p_name:
-                self._p_template["_p", 0, p_name] = self._tvp_data[p_name][-1]
+                idx = step_n_horizon if step_n_horizon < self.mpc_config["params"]["n_horizon"] else -1
+                self._p_template["_p", 0, p_name] = self._tvp_data[p_name][idx]
 
         return self._p_template
+
+
 
 
 class TTAHMPC(AHMPC):
