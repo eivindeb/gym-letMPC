@@ -894,9 +894,582 @@ class ETMPCMIX(ETMPC):  # ET MPC action is et decision and noise (or noise + lqr
         return u_cfs
 
 
+class AHETMPCMIX(ETMPC):  # ET MPC action is et decision and noise (or noise + lqr if not recompute)
+    def __init__(self, mpc_config, lqr_config, mpc_model=None, viewer=None, max_steps=None):
+        self.mode = mpc_config.pop("mode", None)
+        assert self.mode in ["list", "weights"]
+
+        if "nlpsol_opts" not in mpc_config:
+            mpc_config["nlpsol_opts"] = {}
+        mpc_config["nlpsol_opts"]["ipopt.max_iter"] = 250
+
+        if self.mode == "weights":
+            for state in mpc_config["model"]["states"].values():
+                state["rhs"] = "({}) * (1 - hend)".format(state["rhs"])
+
+            mpc_config["objective"]["lterm"]["expression"] = "({}) * (1 - hend)".format(
+                mpc_config["objective"]["lterm"]["expression"])
+            mpc_config["objective"]["lterm"]["variables"].append({"name": "hend", "type": "_tvp"})
+            for input_name in mpc_config["model"]["inputs"]:
+                if input_name not in [var["name"] for var in mpc_config["objective"]["lterm"]["variables"]]:
+                    mpc_config["objective"]["lterm"]["variables"].append({"name": input_name, "type": "_u"})
+                mpc_config["objective"]["lterm"]["expression"] += " + hend * ({}) ** 2".format(input_name)
+
+            for constraint in mpc_config["constraints"]:
+                if constraint.get("soft", False):
+                    if "expression" in constraint:
+                        constraint["expression"] = "({}) * (1 - hend)".format(constraint["expression"])
+                        constraint["variables"].append({"name": "hend", "type": "_tvp"})
+                    else:
+                        constraint["variables"] = [{"name": "hend", "type": "_tvp"},
+                                                   {"name": constraint["name"], "type": constraint["type"]}]
+                        constraint["expression"] = "({}) * (1 - hend)".format(constraint["name"])
+                        if constraint.get("constraint_type", "upper") == "lower":
+                            constraint["value"] *= -1
+                            constraint["expression"] = "-" + constraint["expression"]
+
+            if "tvps" not in mpc_config["model"]:
+                mpc_config["model"]["tvps"] = {}
+            mpc_config["model"]["tvps"]["hend"] = {
+                "true": [{
+                    "type": "constant",
+                    "kw": {
+                        "value": 0
+                    }
+                }]
+            }
+            if "ps" not in mpc_config["model"]:
+                mpc_config["model"]["ps"] = {}
+            mpc_config["model"]["ps"]["n_horizon"] = {}
+
+        super().__init__(mpc_config, mpc_model=mpc_model, lqr_config=lqr_config, viewer=viewer)
+
+        if self.mode == "list":
+            mpc_model = self.mpc.model
+            max_horizon = self.mpc_config["params"]["n_horizon"]
+            mpcs = []
+            for h_i in range(1, max_horizon):
+                self.mpc_config["params"]["n_horizon"] = h_i
+                mpcs.append(initialize_mpc(mpc_model,
+                                           self.mpc_config,
+                                           tvp_fun=self._get_tvp_values if self.tvp_props is not None else None,
+                                           p_fun=self._get_p_values if len(
+                                               self.mpc_config["model"].get("ps", [])) > 0 else None,
+                                           value_function=self.value_function))
+            self.mpc_config["params"]["n_horizon"] = max_horizon
+            mpcs.append(self.mpc)
+            self._mpc = mpcs
+            self.n_horizon = max_horizon
+
+        self._current_h = None
+
+    def reset(self, state=None, reference=None, constraint=None, tvp=None):
+        super().reset(state=state, reference=reference, constraint=constraint, tvp=tvp)
+        if self.mode == "list":
+            for h in range(self.n_horizon):
+                self._current_h = h
+                self.mpc.reset_history()
+        else:
+            self.mpc.reset_history()
+
+        self.history["mpc_horizon"] = []
+
+    def get_action(self, state, action, tvp_values=None): # action is [mpc_compute, horizon, *u + noise] u is lqr or 0
+        compute_mpc_solution = bool(action.flat[0])
+        n_horizon = int(action.flat[1])
+        self._current_h = n_horizon
+        if self.steps_since_mpc_computation is None or ("steady_state" not in self.lqr_config and
+                                                        self.steps_since_mpc_computation >= self.n_horizon - 1):
+            compute_mpc_solution = True
+
+        state_vec = self._get_state_vector(state)
+
+        self.history["mpc_horizon"].append(n_horizon)
+
+        if tvp_values is not None:
+            for ref_name in self.current_reference:
+                if ref_name in tvp_values:
+                    self.current_reference[ref_name] = tvp_values[ref_name][0]
+
+            if "end" in tvp_values and self.max_steps is not None and self.max_steps - self.current_step < self.n_horizon:
+                end_steps = self.n_horizon - (self.max_steps - self.current_step)
+                tvp_values["end"][-end_steps:] = [1.0] * end_steps
+            self._tvp_data = tvp_values
+
+        if self.mode == "weights":
+            if n_horizon < self.mpc_config["params"]["n_horizon"]:
+                tvp_values["hend"][n_horizon:] = [1.0] * (self.mpc_config["params"]["n_horizon"] + 1 - n_horizon)
+
+        if compute_mpc_solution:
+            for t_c in self.mpc_config.get("terminal_constraints", []):
+                if isinstance(t_c["value"], str):
+                    self.mpc.terminal_bounds[t_c["constraint_type"], t_c["name"]] = self._tvp_data[t_c["value"]][-1]
+
+            self.mpc.t0 = len(self.history["mpc_compute"]) * self.mpc.data.meta_data['t_step']
+            mpc_optimal_action = self.mpc.make_step(state_vec)
+            self.mpc_state_preds = mpc_get_solution(self.mpc, states="all")
+            self._mpc_action_sequence = mpc_get_solution(self.mpc, inputs="all")
+
+            u_cfs = mpc_optimal_action# + action[2:]
+            self.steps_since_mpc_computation = 0
+
+            self.history["mpc_compute"].append(True)
+            epsilon_dict = self._get_state_dict(np.full_like(self.mpc_state_preds[:, 0, :], np.nan))
+            if self.tvp_props is not None:
+                epsilon_dict.update({name: 0 for name in self.tvp_props})
+            self.history["epsilons"].append(epsilon_dict)
+            self.history["state_preds"].append(np.full_like(self.mpc_state_preds[:, 0, :], np.nan))
+            self.history["u_mpc"].append(mpc_optimal_action)
+            self.history["u_lqr"].append(np.full_like(mpc_optimal_action, np.nan))
+            self.history["execution_time"].append(
+                sum([v for k, v in self.mpc.solver_stats.items() if k.startswith("t_proc")]))
+        else:
+            if self.steps_since_mpc_computation + 2 < self.mpc_state_preds.shape[1]:
+                mpc_state_pred = self.mpc_state_preds[:, self.steps_since_mpc_computation + 1]
+                u_mpc = self._mpc_action_sequence[:, self.steps_since_mpc_computation + 1]
+            else:
+                mpc_state_pred = self.get_lqr_steady_state().reshape(-1, 1)
+                u_mpc = 0
+
+            if self.lqr_config["model"]["class"] == "linearization" and self.steps_since_mpc_computation == 0:
+                operating_point = self._get_state_dict(state_vec)
+                operating_point.update(self._get_input_dict(self._mpc_action_sequence[0, 1, :]))
+                self.lqr.evaluate_linear_model(operating_point)
+
+            # TODO: get preds and stuff from model?
+            epsilon = state_vec - mpc_state_pred
+            exec_time = time.process_time()
+            u_lqr = action[2:]#np.array(self.lqr.get_action(epsilon))
+            #u_lqr = np.zeros_like(u_lqr)
+            exec_time = time.process_time() - exec_time
+            u_cfs = u_mpc + u_lqr
+
+            self.history["mpc_compute"].append(False)
+            epsilon_dict = self._get_state_dict(epsilon)
+            if self.tvp_props is not None:
+                for name in self._tvp_data:
+                    if self.steps_since_mpc_computation + 1 < len(
+                            self.history["tvp"][-(self.steps_since_mpc_computation + 1)][name]):
+                        pred = self.history["tvp"][-(self.steps_since_mpc_computation + 1)][name][
+                            self.steps_since_mpc_computation + 1]
+                    else:
+                        pred = self.history["tvp"][-(self.steps_since_mpc_computation + 1)][name][-1]
+                    epsilon_dict[name] = self._tvp_data[name][0] - pred
+            self.history["epsilons"].append(epsilon_dict)
+            self.history["state_preds"].append(mpc_state_pred)
+            self.history["u_mpc"].append(u_mpc)
+            self.history["u_lqr"].append(u_lqr)
+            self.history["execution_time"].append(exec_time)
+
+            self.steps_since_mpc_computation += 1
+
+        for u_i, u_name in enumerate(self.input_names):
+            if self.mpc_config["model"]["inputs"][u_name].get("noise", None) is not None:
+                noise = self.mpc_config["model"]["inputs"][u_name]["noise"]
+                u_cfs[u_i] += getattr(np.random, noise["type"])(**noise["kw"])
+            if "clin-{}-u".format(u_name) in self.constraints:
+                u_cfs[u_i] = min(u_cfs[u_i], self.constraints["clin-{}-u".format(u_name)]["value"])
+            if "clin-{}-l".format(u_name) in self.constraints:
+                u_cfs[u_i] = max(u_cfs[u_i], self.constraints["clin-{}-l".format(u_name)]["value"])
+
+        self.history["u_cfs"].append(u_cfs)
+
+        for input_i, input_name in enumerate(self.input_names):
+            self.current_input[input_name] = u_cfs[input_i]
+
+        self.current_step += 1
+        self.history["inputs"].append(copy.deepcopy(self.current_input))
+        self.history["references"].append(copy.deepcopy(self.current_reference))
+        self.history["errors"].append(self._get_tracking_error(state))
+        self.history["tvp"].append(self._tvp_data)
+
+        return u_cfs
+
+    def _get_p_values(self, t):
+        #p_values = super()._get_p_values(t)
+        if self.mode == "weights":
+            if len(self.history["mpc_horizon"]) == 0:
+                step_n_horizon = self.mpc_config["params"]["n_horizon"]
+            else:
+                step_n_horizon = self.history["mpc_horizon"][-1]
+            for p_label in self._p_template.labels():
+                p_name = p_label.split(",")[2]
+                if p_name == "n_horizon":
+                    self._p_template["_p", 0, p_name] = step_n_horizon
+                elif "_r" in p_name:
+                    idx = step_n_horizon if step_n_horizon < self.mpc_config["params"]["n_horizon"] else -1
+                    self._p_template["_p", 0, p_name] = self._tvp_data[p_name][idx]
+
+            return self._p_template
+        elif self.mode == "list":
+            for p_label in self._p_template.labels():
+                p_name = p_label.split(",")[2]
+                if "_r" in p_name:
+                    idx = self._current_h if self._current_h < self.mpc_config["params"]["n_horizon"] else -1
+                    self._p_template["_p", 0, p_name] = self._tvp_data[p_name][idx]
+
+            return self._p_template
+        else:
+            raise ValueError
+
+    def _get_tvp_values(self, t_now):
+        tvp_values = super()._get_tvp_values(t_now)
+        if self.mode == "weights":
+            return tvp_values
+        elif self.mode == "list":
+            tvp_template = self.mpc.get_tvp_template()
+            tvp_template["_tvp", :] = tvp_values["_tvp", :][:self._current_h + 1]
+            return tvp_template
+        else:
+            raise ValueError
+
+
+class LQRETMPC(ETMPC):  # Fixed schedule MPC recompute, action is LQR
+    def __init__(self, mpc_config, lqr_config, mpc_model=None, viewer=None, max_steps=None):
+        self.compute_every = mpc_config["compute_every"]
+        super().__init__(mpc_config, lqr_config, mpc_model, viewer, max_steps)
+
+    def get_action(self, state, action, tvp_values=None):
+        if self.steps_since_mpc_computation is None or self.current_step % self.compute_every == 0:
+            compute_mpc_solution = True
+        else:
+            compute_mpc_solution = False
+
+        state_vec = self._get_state_vector(state)
+
+        if tvp_values is not None:
+            for ref_name in self.current_reference:
+                if ref_name in tvp_values:
+                    self.current_reference[ref_name] = tvp_values[ref_name][0]
+
+            if "end" in tvp_values and self.max_steps is not None and self.max_steps - self.current_step < self.n_horizon:
+                end_steps = self.n_horizon - (self.max_steps - self.current_step)
+                tvp_values["end"][-end_steps:] = [1.0] * end_steps
+            self._tvp_data = tvp_values
+
+        if compute_mpc_solution:
+            for t_c in self.mpc_config.get("terminal_constraints", []):
+                if isinstance(t_c["value"], str):
+                    self.mpc.terminal_bounds[t_c["constraint_type"], t_c["name"]] = self._tvp_data[t_c["value"]][-1]
+
+            self.mpc.t0 = len(self.history["mpc_compute"]) * self.mpc.data.meta_data['t_step']
+            mpc_optimal_action = self.mpc.make_step(state_vec)
+            self.mpc_state_preds = mpc_get_solution(self.mpc, states="all")
+            self._mpc_action_sequence = mpc_get_solution(self.mpc, inputs="all")
+
+            u_cfs = mpc_optimal_action
+            self.steps_since_mpc_computation = 0
+
+            self.history["mpc_compute"].append(True)
+            epsilon_dict = self._get_state_dict(np.full_like(self.mpc_state_preds[:, 0, :], np.nan))
+            if self.tvp_props is not None:
+                epsilon_dict.update({name: 0 for name in self.tvp_props})
+            self.history["epsilons"].append(epsilon_dict)
+            self.history["state_preds"].append(np.full_like(self.mpc_state_preds[:, 0, :], np.nan))
+            self.history["u_mpc"].append(mpc_optimal_action)
+            self.history["u_lqr"].append(np.full_like(mpc_optimal_action, np.nan))
+            self.history["execution_time"].append(
+                sum([v for k, v in self.mpc.solver_stats.items() if k.startswith("t_proc")]))
+        else:
+            if self.steps_since_mpc_computation + 2 < self.mpc_state_preds.shape[1]:
+                mpc_state_pred = self.mpc_state_preds[:, self.steps_since_mpc_computation + 1]
+                u_mpc = self._mpc_action_sequence[:, self.steps_since_mpc_computation + 1]
+            else:
+                mpc_state_pred = self.get_lqr_steady_state().reshape(-1, 1)
+                u_mpc = 0
+
+            if self.lqr_config["model"]["class"] == "linearization" and self.steps_since_mpc_computation == 0:
+                operating_point = self._get_state_dict(state_vec)
+                operating_point.update(self._get_input_dict(self._mpc_action_sequence[0, 1, :]))
+                self.lqr.evaluate_linear_model(operating_point)
+
+            # TODO: get preds and stuff from model?
+            epsilon = state_vec - mpc_state_pred
+            exec_time = time.process_time()
+            u_lqr = action#np.array(self.lqr.get_action(epsilon))
+            exec_time = time.process_time() - exec_time
+            u_cfs = u_mpc + u_lqr
+
+            self.history["mpc_compute"].append(False)
+            epsilon_dict = self._get_state_dict(epsilon)
+            if self.tvp_props is not None:
+                for name in self._tvp_data:
+                    if self.steps_since_mpc_computation + 1 < len(self.history["tvp"][-(self.steps_since_mpc_computation + 1)][name]):
+                        pred = self.history["tvp"][-(self.steps_since_mpc_computation + 1)][name][
+                                               self.steps_since_mpc_computation + 1]
+                    else:
+                        pred = self.history["tvp"][-(self.steps_since_mpc_computation + 1)][name][-1]
+                    epsilon_dict[name] = self._tvp_data[name][0] - pred
+            self.history["epsilons"].append(epsilon_dict)
+            self.history["state_preds"].append(mpc_state_pred)
+            self.history["u_mpc"].append(u_mpc)
+            self.history["u_lqr"].append(u_lqr)
+            self.history["execution_time"].append(exec_time)
+
+            self.steps_since_mpc_computation += 1
+
+        for u_i, u_name in enumerate(self.input_names):
+            if self.mpc_config["model"]["inputs"][u_name].get("noise", None) is not None:
+                noise = self.mpc_config["model"]["inputs"][u_name]["noise"]
+                u_cfs[u_i] += getattr(np.random, noise["type"])(**noise["kw"])
+            if "clin-{}-u".format(u_name) in self.constraints:
+                u_cfs[u_i] = min(u_cfs[u_i], self.constraints["clin-{}-u".format(u_name)]["value"])
+            if "clin-{}-l".format(u_name) in self.constraints:
+                u_cfs[u_i] = max(u_cfs[u_i], self.constraints["clin-{}-l".format(u_name)]["value"])
+
+        self.history["u_cfs"].append(u_cfs)
+
+        for input_i, input_name in enumerate(self.input_names):
+            self.current_input[input_name] = u_cfs[input_i]
+
+        self.current_step += 1
+        self.history["inputs"].append(copy.deepcopy(self.current_input))
+        self.history["references"].append(copy.deepcopy(self.current_reference))
+        self.history["errors"].append(self._get_tracking_error(state))
+        self.history["tvp"].append(self._tvp_data)
+
+        return u_cfs
+
+
+class LQRFHFNMPC(AHETMPCMIX):
+    def __init__(self, mpc_config, lqr_config, mpc_model=None, viewer=None, max_steps=None):
+        self.N = mpc_config["N"]
+        self.H = mpc_config["H"]
+        mpc_config["mode"] = "weights"
+        super().__init__(mpc_config, lqr_config, mpc_model, viewer, max_steps)
+
+    def get_action(self, state, action, tvp_values=None):
+        action = np.concatenate([[self.current_step % self.N == 0], [self.H if self.current_step > 0 else self.mpc_config["params"]["n_horizon"]], action])
+        return super().get_action(state, action, tvp_values)
+
+
+class LQRMPC(ETMPC):
+    def get_action(self, state, action, tvp_values=None):
+        if self.lqr_config.get("type", "time-invariant") == "time-varying":
+            if tvp_values is not None:
+                for ref_name in self.current_reference:
+                    if ref_name in tvp_values:
+                        self.current_reference[ref_name] = tvp_values[ref_name][0]
+
+            if self.current_step % self.mpc_config["params"]["n_horizon"] == 0:
+                As, Bs = [], []
+                for v_i in range(1, len(tvp_values["x1_r"])):
+                    #system = self.mpc.get_linearized_model_at(np.array([tvp_values["x1_r"][v_i], 0]), np.array([0]))
+                    #As.append(system[0])
+                    #Bs.append(system[1])
+                    As.append(np.array([[1, tvp_values["x1_r"][v_i] ** 2 + 0.1], [0, 1]]))
+                    Bs.append(np.array([[0], [1]]))
+                self.lqr.update_component(A=As, B=Bs)
+                self.steps_since_mpc_computation = 0
+            else:
+                self.steps_since_mpc_computation += 1
+            self.history["inputs"].append(copy.deepcopy(self.current_input))
+            self.history["references"].append(copy.deepcopy(self.current_reference))
+            #self.history["errors"].append(self._get_tracking_error(state))
+
+        self._tvp_data = tvp_values
+        self.history["u_lqr"].append(np.atleast_1d(action[0]))
+
+        self.current_step += 1
+        return action
 
 
 class AHMPC(LMPC):
+    def __init__(self, mpc_config, mpc_model=None, viewer=None):  # TODO: maybe ensure u_t>hend = 0 by constraints or cost
+        self.mode = mpc_config.pop("mode", None)
+        assert self.mode in ["list", "weights"]
+
+        if "nlpsol_opts" not in mpc_config:
+            mpc_config["nlpsol_opts"] = {}
+        mpc_config["nlpsol_opts"]["ipopt.max_iter"] = 250
+
+        if self.mode == "weights":
+            for state in mpc_config["model"]["states"].values():
+                state["rhs"] = "({}) * (1 - hend)".format(state["rhs"])
+
+            mpc_config["objective"]["lterm"]["expression"] = "({}) * (1 - hend)".format(
+                mpc_config["objective"]["lterm"]["expression"])
+            mpc_config["objective"]["lterm"]["variables"].append({"name": "hend", "type": "_tvp"})
+            for input_name in mpc_config["model"]["inputs"]:
+                if input_name not in [var["name"] for var in mpc_config["objective"]["lterm"]["variables"]]:
+                    mpc_config["objective"]["lterm"]["variables"].append({"name": input_name, "type": "_u"})
+                mpc_config["objective"]["lterm"]["expression"] += " + hend * ({}) ** 2".format(input_name)
+
+            for constraint in mpc_config["constraints"]:
+                if constraint.get("soft", False):
+                    if "expression" in constraint:
+                        constraint["expression"] = "({}) * (1 - hend)".format(constraint["expression"])
+                        constraint["variables"].append({"name": "hend", "type": "_tvp"})
+                    else:
+                        constraint["variables"] = [{"name": "hend", "type": "_tvp"},
+                                                   {"name": constraint["name"], "type": constraint["type"]}]
+                        constraint["expression"] = "({}) * (1 - hend)".format(constraint["name"])
+                        if constraint.get("constraint_type", "upper") == "lower":
+                            constraint["value"] *= -1
+                            constraint["expression"] = "-" + constraint["expression"]
+
+            if "tvps" not in mpc_config["model"]:
+                mpc_config["model"]["tvps"] = {}
+            mpc_config["model"]["tvps"]["hend"] = {
+                "true": [{
+                    "type": "constant",
+                    "kw": {
+                        "value": 0
+                    }
+                }]
+            }
+            if "ps" not in mpc_config["model"]:
+                mpc_config["model"]["ps"] = {}
+            mpc_config["model"]["ps"]["n_horizon"] = {}
+
+        super().__init__(mpc_config, mpc_model=mpc_model, viewer=viewer)
+
+        if self.mode == "list":
+            mpc_model = self.mpc.model
+            max_horizon = self.mpc_config["params"]["n_horizon"]
+            mpcs = []
+            for h_i in range(1, max_horizon):
+                self.mpc_config["params"]["n_horizon"] = h_i
+                mpcs.append(initialize_mpc(mpc_model,
+                                      self.mpc_config,
+                                      tvp_fun=self._get_tvp_values if self.tvp_props is not None else None,
+                                      p_fun=self._get_p_values if len(self.mpc_config["model"].get("ps", [])) > 0 else None,
+                                      value_function=self.value_function))
+            self.mpc_config["params"]["n_horizon"] = max_horizon
+            mpcs.append(self.mpc)
+            self._mpc = mpcs
+            self.n_horizon = max_horizon
+
+        self._current_h = None
+
+    @property
+    def mpc(self):
+        if isinstance(self._mpc, list):
+            return self._mpc[self._current_h - 1]
+        else:
+            return self._mpc
+
+    @mpc.setter
+    def mpc(self, value):
+        self._mpc = value
+
+    def reset(self, state=None, reference=None, constraint=None, tvp=None):
+        if reference is not None:
+            self.update_reference(reference)
+
+        if constraint is not None:
+            self.update_constraints(constraint)
+
+        if self.mode == "list":
+            for h in range(self.n_horizon):
+                self._current_h = h
+                self.mpc.reset_history()
+        else:
+            self.mpc.reset_history()
+        if self.viewer is not None:
+            self.viewer["mpc_graphics"].clear()
+
+        if state is None:
+            state = self.initial_state
+        elif isinstance(state, dict):  # TODO: partial state intialization
+            state = self._get_state_vector(state)
+
+        if tvp is not None:
+            assert self.tvp_props is not None
+            self._tvp_data = {name: val for name, val in tvp.items()}
+        elif self.tvp_props is not None:
+            self._tvp_data = {name: None for name in self.tvp_props}
+
+        # self.mpc.set_initial_p_num()
+        # self.mpc.calculate_aux_num()
+
+        self.current_input = {u_name: None for u_name in self.input_names}
+        self.history = {"inputs": [self.current_input], "references": [self.current_reference],
+                        "errors": [self._get_tracking_error(state)],
+                        "tvp": []}
+
+        self.history["mpc_horizon"] = []
+
+    def get_action(self, state, n_horizon, tvp_values=None):  # TODO: This is maybe bad as the name doesnt suggest that it changes the object but it acts closely related to a step function
+        if isinstance(n_horizon, np.ndarray):
+            n_horizon = n_horizon.item()
+        state_vec = self._get_state_vector(state)
+        self._current_h = n_horizon
+        if self.mode == "weights":
+            if n_horizon < self.mpc_config["params"]["n_horizon"]:
+                tvp_values["hend"][n_horizon:] = [1.0] * (self.mpc_config["params"]["n_horizon"] + 1 - n_horizon)
+
+        for ref_name in self.current_reference:
+            self.current_reference[ref_name] = tvp_values[ref_name][0]
+
+        self.history["mpc_horizon"].append(n_horizon)
+
+        self._tvp_data = tvp_values
+
+        for t_c in self.mpc_config.get("terminal_constraints", []):
+            if isinstance(t_c["value"], str):
+                self.mpc.terminal_bounds[t_c["constraint_type"], t_c["name"]] = tvp_values[t_c["value"]][-1]
+
+        mpc_optimal_action = self.mpc.make_step(state_vec)
+        self.mpc_state_preds = mpc_get_solution(self.mpc, states="all")
+        self._mpc_action_sequence = mpc_get_solution(self.mpc, inputs="all")
+        self.steps_since_mpc_computation = 0
+
+        for input_i, input_name in enumerate(self.input_names):
+            self.current_input[input_name] = mpc_optimal_action[input_i]
+
+        self.history["inputs"].append(copy.deepcopy(self.current_input))
+        self.history["references"].append(copy.deepcopy(self.current_reference))
+        self.history["errors"].append(self._get_tracking_error(state))
+        self.history["tvp"].append(self._tvp_data)
+
+        return mpc_optimal_action
+
+    # TODO: add support for changing Q and R in MPC and LQR
+
+    def configure_viewer(self, viewer=None, plot_prediction=False):
+        return super().configure_viewer(viewer=viewer, plot_prediction=False)
+
+    def _get_p_values(self, t):
+        #p_values = super()._get_p_values(t)
+        if self.mode == "weights":
+            if len(self.history["mpc_horizon"]) == 0:
+                step_n_horizon = self.mpc_config["params"]["n_horizon"]
+            else:
+                step_n_horizon = self.history["mpc_horizon"][-1]
+            for p_label in self._p_template.labels():
+                p_name = p_label.split(",")[2]
+                if p_name == "n_horizon":
+                    self._p_template["_p", 0, p_name] = step_n_horizon
+                elif "_r" in p_name:
+                    idx = step_n_horizon if step_n_horizon < self.mpc_config["params"]["n_horizon"] else -1
+                    self._p_template["_p", 0, p_name] = self._tvp_data[p_name][idx]
+
+            return self._p_template
+        elif self.mode == "list":
+            for p_label in self._p_template.labels():
+                p_name = p_label.split(",")[2]
+                if "_r" in p_name:
+                    idx = self._current_h if self._current_h < self.mpc_config["params"]["n_horizon"] else -1
+                    self._p_template["_p", 0, p_name] = self._tvp_data[p_name][idx]
+
+            return self._p_template
+        else:
+            raise ValueError
+
+    def _get_tvp_values(self, t_now):
+        tvp_values = super()._get_tvp_values(t_now)
+        if self.mode == "weights":
+            return tvp_values
+        elif self.mode == "list":
+            tvp_template = self.mpc.get_tvp_template()
+            tvp_template["_tvp", :] = tvp_values["_tvp", :][:self._current_h + 1]
+            return tvp_template
+        else:
+            raise ValueError
+
+
+class AHMPCOLD(LMPC):
     def __init__(self, mpc_config, mpc_model=None, viewer=None):  # TODO: maybe ensure u_t>hend = 0 by constraints or cost
         if "nlpsol_opts" not in mpc_config:
             mpc_config["nlpsol_opts"] = {}
