@@ -450,8 +450,10 @@ class LMPC:  # TODO: initalize input to some value other than None
                         tvp_lines["forecast"].set_markevery(mpc_computation_markers)
 
             for line_i, (data, line) in enumerate(zip(pred_line_data, self.viewer['mpc_graphics'].pred_lines.full)):
-                mpc_computation_markers = mpc_compute + [False] * (
-                        len(pred_line_data[line_i]["x"]) - len(mpc_compute))
+                if len(mpc_compute) > len(data["x"]):
+                    mpc_computation_markers = mpc_compute[:len(data["x"])]
+                else:
+                    mpc_computation_markers = mpc_compute + [False] * (len(pred_line_data[line_i]["x"]) - len(mpc_compute))
                 line.set_data(data["x"], data["y"])
                 line.set_markevery(mpc_computation_markers)
 
@@ -506,7 +508,14 @@ class LMPC:  # TODO: initalize input to some value other than None
         return self._tvp_template
 
     def _get_p_values(self, t_now):
-        raise NotImplementedError
+        for p_label in self._p_template.labels():
+            p_name = p_label.split(",")[2]
+            if "_r" in p_name:
+                self._p_template["_p", 0, p_name] = self._tvp_data[p_name][-1]
+            else:
+                raise NotImplementedError
+
+        return self._p_template
 
     def get_mpc(self):
         return self.mpc
@@ -517,7 +526,7 @@ class LMPC:  # TODO: initalize input to some value other than None
             self.current_reference.update(reference)
             for ref_name, ref_props in self.mpc_config.get("reference", {}).items():
                 ref_props["value"] = self.current_reference[ref_name]
-            self._initialize_mpc(mpc_model=self.mpc.model)
+            #self._initialize_mpc(mpc_model=self.mpc.model)
 
     def update_constraints(self, constraints):  # TODO: fix for TVPmodels
         if len(constraints) > 0:
@@ -563,7 +572,7 @@ class LMPC:  # TODO: initalize input to some value other than None
         return old_data
 
     def _initialize_mpc(self, mpc_model=None, state=None):
-        if hasattr(self, "mpc"):
+        if self.mpc is not None:
             old_data = self.mpc.data
         else:
             old_data = None
