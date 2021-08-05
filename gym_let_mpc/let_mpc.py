@@ -63,9 +63,9 @@ class LetMPCEnv(gym.Env):
                 for c_name, c_props in controller.constraints.items():
                     if c_props["name"] == a_name:
                         if c_props["constraint_type"] == "lower":
-                            a_low.append(c_props["value"])
+                            a_low.append(c_props["value"] * 2)
                         else:
-                            a_high.append(c_props["value"])
+                            a_high.append(c_props["value"] * 2)
                 if len(a_low) == a_i:
                     a_low.append(-np.finfo(np.float32).max)
                 if len(a_high) == a_i:
