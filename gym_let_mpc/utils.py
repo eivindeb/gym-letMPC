@@ -149,7 +149,7 @@ class TensorFlowEvaluator(casadi.Callback):
                 ref.set_enabled(status)
 
 class casadiNNVF:
-    def __init__(self, layers=(), type="nn"):
+    def __init__(self, layers=(), type="nn", act_fun="tanh"):
         assert isinstance(layers, list) or isinstance(layers, tuple)
         self.layers = layers
         self.weights = None
@@ -158,6 +158,7 @@ class casadiNNVF:
         self.biases_num = None
         self.eval_VF = None
         self.type = type
+        self.act_fun = act_fun
 
     def create_function(self, state, parameters):
         input_data_cat = vertcat(state, parameters).T
@@ -167,7 +168,13 @@ class casadiNNVF:
         in_size = input_data_cat.shape[1]
         h_l_ws, h_l_bs = [], []
 
-        relu_activation = Function("relu_f", [blank], [casadi.fmax(0, blank)])
+        if self.act_fun == "tanh":
+            activation = Function("tanh_f", [blank], [casadi.tanh(blank)])
+        elif self.act_fun == "relu":
+            activation = Function("relu_f", [blank], [casadi.fmax(0, blank)])
+        else:
+            raise ValueError
+
 
         hidden_layer = input_data_cat
         if self.type == "nn":
@@ -175,7 +182,7 @@ class casadiNNVF:
                 h_l_ws.append(casadi.tools.entry('hl_{}_weights'.format(l_i), sym=SX.sym('hl_{}_weights'.format(l_i), hidden_layer.shape[1], l_units)))
                 h_l_bs.append(casadi.tools.entry('hl_{}_bias'.format(l_i), sym=SX.sym('hl_{}_bias'.format(l_i), l_units, 1)))
 
-                hidden_layer = relu_activation(
+                hidden_layer = activation(
                     (hidden_layer @ h_l_ws[l_i].sym) + (DM.ones(hidden_layer.shape[0], l_units) @ diag(h_l_bs[l_i].sym)))
         elif self.type == "sos":
             hidden_layer = hidden_layer ** 2
