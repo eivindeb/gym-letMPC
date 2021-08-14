@@ -692,7 +692,7 @@ class LetMPCEnv(gym.Env):
         self.control_system.controller.update_mpc_params({"use_nn_vf": status})
 
     def get_lqr(self):
-        return self.control_system.controller.lqr
+        return getattr(self.control_system.controller, "lqr", None)
 
     def update_lqr(self, **components):
         assert hasattr(self.control_system.controller, "lqr")
