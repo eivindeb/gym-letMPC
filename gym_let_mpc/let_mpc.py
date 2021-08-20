@@ -195,107 +195,114 @@ class LetMPCEnv(gym.Env):
 
         self.steps_count = 0
 
-        sampled_state = self.sample_state()
-        sampled_reference = self.sample_reference()
-        sampled_constraint = self.sample_constraints()
-        sampled_model = self.sample_model()
+        first = True
+        #res = []
+        while first or not self.control_system.controller.mpc.solver_stats["success"]:
+            if not first and any([arg is not None for arg in [state, reference, constraint, model, process_noise, tvp]]):
+                print("Warning: Supplied initial conditions produced an infeasible problem")
+            first = False
+            sampled_state = self.sample_state()
+            sampled_reference = self.sample_reference()
+            sampled_constraint = self.sample_constraints()
+            sampled_model = self.sample_model()
 
-        if state is not None:
-            sampled_state.update(state)
-        elif len(sampled_state) == 0:
-            sampled_state = None
-        if reference is not None or (tvp is not None and any([k.endswith("_r") for k in tvp])):
-            if reference is not None:
-                reference.update({k: sum(v[0]["true"]) for k, v in tvp.items() if k.endswith("_r")})
-            else:
-                reference = {k: sum(v[0]["true"]) for k, v in tvp.items() if k.endswith("_r")}
-            sampled_reference.update(reference)
-        elif len(sampled_reference) == 0:
-            sampled_reference = None
-        if constraint is not None:
-            sampled_constraint.update(constraint)
-        elif len(sampled_constraint) == 0:
-            sampled_constraint = None
-        if model is not None:
-            sampled_model = update_dict_recursively(sampled_model, model)
-        elif len(sampled_model) == 0:
-            sampled_model = None
+            if state is not None:
+                sampled_state.update(state)
+            elif len(sampled_state) == 0:
+                sampled_state = None
+            if reference is not None or (tvp is not None and any([k.endswith("_r") for k in tvp])):
+                if reference is not None:
+                    reference.update({k: sum(v[0]["true"]) for k, v in tvp.items() if k.endswith("_r")})
+                else:
+                    reference = {k: sum(v[0]["true"]) for k, v in tvp.items() if k.endswith("_r")}
+                sampled_reference.update(reference)
+            elif len(sampled_reference) == 0:
+                sampled_reference = None
+            if constraint is not None:
+                sampled_constraint.update(constraint)
+            elif len(sampled_constraint) == 0:
+                sampled_constraint = None
+            if model is not None:
+                sampled_model = update_dict_recursively(sampled_model, model)
+            elif len(sampled_model) == 0:
+                sampled_model = None
 
-        if self.config["mpc"]["type"] == "TTAHMPC":
-            if tvp is None:
-                tvp = {}
-            for i, comp in enumerate(["x", "y", "theta"]):
-                if comp not in sampled_state:
-                    sampled_state[comp] = 0
+            if self.config["mpc"]["type"] in ["TTAHMPC", "TTAHMPCRANGE"]:
+                if tvp is None:
+                    tvp = {}
+                for i, comp in enumerate(["x", "y", "theta"]):
+                    if comp not in sampled_state:
+                        sampled_state[comp] = 0
 
-            if sampled_reference is not None and "theta_r" in sampled_reference:
-                self.theta_r = sampled_reference.pop("theta_r")
-            else:
-                self.theta_r = self.np_random.uniform(sampled_state["theta"] - np.radians(45), sampled_state["theta"] + np.radians(45))
+                if sampled_reference is not None and "theta_r" in sampled_reference:
+                    self.theta_r = sampled_reference.pop("theta_r")
+                else:
+                    self.theta_r = self.np_random.uniform(sampled_state["theta"] - np.radians(45), sampled_state["theta"] + np.radians(45))
 
-            if sampled_reference is not None and "traj_steps" in sampled_reference:
-                self.traj_steps = sampled_reference.pop("traj_steps")
-            else:
-                self.traj_steps = self.np_random.randint(60, 100)
+                if sampled_reference is not None and "traj_steps" in sampled_reference:
+                    self.traj_steps = sampled_reference.pop("traj_steps")
+                else:
+                    self.traj_steps = self.np_random.randint(60, 100)
 
-            self.trajectory_start_x = 0
-            self.trajectory_start_y = 0
-            self.trajectory_goal_x = np.cos(self.theta_r) * self.traj_steps * self.control_system.controller.u_s_ref
-            self.trajectory_goal_y = np.sin(self.theta_r) * self.traj_steps * self.control_system.controller.u_s_ref
-            self.trajectory = {"x": np.linspace(sampled_state["x"], self.trajectory_goal_x, self.traj_steps),
-                               "y": np.linspace(sampled_state["y"], self.trajectory_goal_y, self.traj_steps),
-                               "u_s": np.full((self.traj_steps,), self.control_system.controller.u_s_ref)}
-            for comp in self.trajectory:
-                if "trajectory_{}".format(comp) not in tvp:
-                    tvp["trajectory_{}".format(comp)] = [{"true": [v], "forecast": []} for v in self.trajectory[comp]]
+                self.trajectory_start_x = 0
+                self.trajectory_start_y = 0
+                self.trajectory_goal_x = np.cos(self.theta_r) * self.traj_steps * self.control_system.controller.u_s_ref
+                self.trajectory_goal_y = np.sin(self.theta_r) * self.traj_steps * self.control_system.controller.u_s_ref
+                self.trajectory = {"x": np.linspace(sampled_state["x"], self.trajectory_goal_x, self.traj_steps),
+                                   "y": np.linspace(sampled_state["y"], self.trajectory_goal_y, self.traj_steps),
+                                   "u_s": np.full((self.traj_steps,), self.control_system.controller.u_s_ref)}
+                for comp in self.trajectory:
+                    if "trajectory_{}".format(comp) not in tvp:
+                        tvp["trajectory_{}".format(comp)] = [{"true": [v], "forecast": []} for v in self.trajectory[comp]]
 
-            self.trajectory["n_steps"] = self.traj_steps
-            self.control_system.controller.goal_x = self.trajectory_goal_x
-            self.control_system.controller.goal_y = self.trajectory_goal_y
+                self.trajectory["n_steps"] = self.traj_steps
+                self.control_system.controller.goal_x = self.trajectory_goal_x
+                self.control_system.controller.goal_y = self.trajectory_goal_y
 
-            self.traj_start = np.array([self.trajectory_start_x, self.trajectory_start_y])
-            self.traj_goal = np.array([self.trajectory_goal_x, self.trajectory_goal_y])
+                self.traj_start = np.array([self.trajectory_start_x, self.trajectory_start_y])
+                self.traj_goal = np.array([self.trajectory_goal_x, self.trajectory_goal_y])
 
-            for obj_i in range(self.control_system.controller.n_objects):
-                if "obj_{}_r".format(obj_i) not in tvp:
-                    tvp.update({"obj_{}_{}".format(obj_i, comp): [{"forecast": [0]}] for comp in ["x", "y", "r"]})
-                    obj_r = self.np_random.uniform(self.config["mpc"]["model"]["tvps"]["obj_0_r"]["true"][0]["kw"]["low"],
-                                                                                  self.config["mpc"]["model"]["tvps"]["obj_0_r"]["true"][0]["kw"]["high"])
-                    tvp["obj_{}_r".format(obj_i)][0]["true"] = [obj_r]
+                for obj_i in range(self.control_system.controller.n_objects):
+                    if "obj_{}_r".format(obj_i) not in tvp:
+                        tvp.update({"obj_{}_{}".format(obj_i, comp): [{"forecast": [0]}] for comp in ["x", "y", "r"]})
+                        obj_r = self.np_random.uniform(self.config["mpc"]["model"]["tvps"]["obj_0_r"]["true"][0]["kw"]["low"],
+                                                                                      self.config["mpc"]["model"]["tvps"]["obj_0_r"]["true"][0]["kw"]["high"])
+                        tvp["obj_{}_r".format(obj_i)][0]["true"] = [obj_r]
 
-                    delta_x = self.np_random.uniform(-obj_r, obj_r)
-                    delta_y = self.np_random.uniform(-np.sqrt(obj_r ** 2 - (delta_x ** 2)), np.sqrt(obj_r ** 2 - (delta_x ** 2)))
-                    traj_xys = np.vstack((self.trajectory["x"], self.trajectory["y"])) + np.array([delta_x, delta_y]).reshape(-1, 1)
-                    obj_feasible_points = [traj_i for traj_i in range(self.trajectory["n_steps"]) if
-                                           np.linalg.norm(traj_xys[:, traj_i] - self.traj_start) > (obj_r * 1.75)
-                                           and np.linalg.norm(traj_xys[:, traj_i] - self.traj_goal) > (obj_r * 1.75)]
-                    obj_center_traj_i = self.np_random.choice(obj_feasible_points)
-                    tvp["obj_{}_x".format(obj_i)][0]["true"] = [self.trajectory["x"][obj_center_traj_i] + delta_x]
-                    tvp["obj_{}_y".format(obj_i)][0]["true"] = [self.trajectory["y"][obj_center_traj_i] + delta_y]
+                        delta_x = self.np_random.uniform(-obj_r, obj_r)
+                        delta_y = self.np_random.uniform(-np.sqrt(obj_r ** 2 - (delta_x ** 2)), np.sqrt(obj_r ** 2 - (delta_x ** 2)))
+                        traj_xys = np.vstack((self.trajectory["x"], self.trajectory["y"])) + np.array([delta_x, delta_y]).reshape(-1, 1)
+                        obj_feasible_points = [traj_i for traj_i in range(self.trajectory["n_steps"]) if
+                                               np.linalg.norm(traj_xys[:, traj_i] - self.traj_start) > (obj_r * 1.75)
+                                               and np.linalg.norm(traj_xys[:, traj_i] - self.traj_goal) > (obj_r * 1.75)]
+                        obj_center_traj_i = self.np_random.choice(obj_feasible_points)
+                        tvp["obj_{}_x".format(obj_i)][0]["true"] = [self.trajectory["x"][obj_center_traj_i] + delta_x]
+                        tvp["obj_{}_y".format(obj_i)][0]["true"] = [self.trajectory["y"][obj_center_traj_i] + delta_y]
 
-        self.control_system.reset(state=sampled_state, reference=sampled_reference, constraint=sampled_constraint,
-                                  model=sampled_model, process_noise=process_noise, tvp=tvp)
-        if self.config["mpc"]["type"] == "ETMPC":
-            actions = {"mpc_compute": True}
-            self.control_system.step(action=np.array([actions["mpc_compute"]]))
-        elif self.config["mpc"]["type"] == "ETMPCMIX":
-            actions = {"mpc_compute": True, "lqr": [0 for i in range(len(self.control_system.controller.input_names))]}
-            self.control_system.step(action=np.array([actions["mpc_compute"] + actions["lqr"]]))
-        elif self.config["mpc"]["type"] == "AHETMPCMIX":
-            actions = {"mpc_compute": True, "mpc_horizon": self.config["mpc"]["params"]["n_horizon"], "lqr": [0 for i in range(len(self.control_system.controller.input_names))]}
-            self.control_system.step(action=np.array([actions["mpc_compute"], actions["mpc_horizon"]] + actions["lqr"]))
-        elif self.config["mpc"]["type"] in ["AHMPC", "TTAHMPC", "TTAHMPCRANGE"]:
-            actions = {"mpc_horizon": self.config["mpc"]["params"]["n_horizon"]}
-            self.control_system.step(action=np.array([actions["mpc_horizon"]]))
-        elif self.config["mpc"]["type"] in ["LQRETMPC", "LQRFHFNMPC"]:  # TODO remove test
-            actions = {"lqr": [0 for i in range(len(self.control_system.controller.input_names))]}
-            self.control_system.step(action=np.array(actions["lqr"]))
-        elif self.config["mpc"]["type"] == "LQRMPC":
-            actions = {"lqr": [0 for i in range(len(self.control_system.controller.input_names))]}
-            self.control_system.step(action=np.array(actions["lqr"]))
-        #self.history["actions"].append(actions)
-        obs = self.get_observation()
-        self.history = {"obs": [obs], "actions": [], "rewards": []}
+            self.control_system.reset(state=sampled_state, reference=sampled_reference, constraint=sampled_constraint,
+                                      model=sampled_model, process_noise=process_noise, tvp=tvp)
+            if self.config["mpc"]["type"] == "ETMPC":
+                actions = {"mpc_compute": True}
+                self.control_system.step(action=np.array([actions["mpc_compute"]]))
+            elif self.config["mpc"]["type"] == "ETMPCMIX":
+                actions = {"mpc_compute": True, "lqr": [0 for i in range(len(self.control_system.controller.input_names))]}
+                self.control_system.step(action=np.array([actions["mpc_compute"] + actions["lqr"]]))
+            elif self.config["mpc"]["type"] == "AHETMPCMIX":
+                actions = {"mpc_compute": True, "mpc_horizon": self.config["mpc"]["params"]["n_horizon"], "lqr": [0 for i in range(len(self.control_system.controller.input_names))]}
+                self.control_system.step(action=np.array([actions["mpc_compute"], actions["mpc_horizon"]] + actions["lqr"]))
+            elif self.config["mpc"]["type"] in ["AHMPC", "TTAHMPC", "TTAHMPCRANGE"]:
+                actions = {"mpc_horizon": self.config["mpc"]["params"]["n_horizon"]}
+                self.control_system.step(action=np.array([actions["mpc_horizon"]]))
+            elif self.config["mpc"]["type"] in ["LQRETMPC", "LQRFHFNMPC"]:  # TODO remove test
+                actions = {"lqr": [0 for i in range(len(self.control_system.controller.input_names))]}
+                self.control_system.step(action=np.array(actions["lqr"]))
+            elif self.config["mpc"]["type"] == "LQRMPC":
+                actions = {"lqr": [0 for i in range(len(self.control_system.controller.input_names))]}
+                self.control_system.step(action=np.array(actions["lqr"]))
+            #self.history["actions"].append(actions)
+            obs = self.get_observation()
+            self.history = {"obs": [obs], "actions": [], "rewards": []}
+            #res.append(self.control_system.controller.mpc.solver_stats["success"])
 
         return obs
 
