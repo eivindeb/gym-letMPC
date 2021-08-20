@@ -14,6 +14,7 @@ import gym_let_mpc
 class LetMPCEnv(gym.Env):
     def __init__(self, config_path, d=1, config_kw=None):
         self.d = d
+        print("running with d={}".format(d))
         def set_config_attrs(parent, kws):
             for attr, val in kws.items():
                 if isinstance(parent, dict) and (attr not in parent or parent[attr] is None):
