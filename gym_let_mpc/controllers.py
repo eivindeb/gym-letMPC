@@ -1374,6 +1374,10 @@ class AHMPC(LMPC):
         elif isinstance(state, dict):  # TODO: partial state intialization
             state = self._get_state_vector(state)
 
+        self.mpc.x0 = state
+        self.mpc.u0 = np.zeros((len(self.input_names),))
+        self.mpc.set_initial_guess()
+
         if tvp is not None:
             assert self.tvp_props is not None
             self._tvp_data = {name: val for name, val in tvp.items()}
