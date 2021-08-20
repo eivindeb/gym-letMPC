@@ -1281,7 +1281,7 @@ class AHMPC(LMPC):
 
         if "nlpsol_opts" not in mpc_config:
             mpc_config["nlpsol_opts"] = {}
-        mpc_config["nlpsol_opts"]["ipopt.max_iter"] = 250
+        mpc_config["nlpsol_opts"]["ipopt.max_iter"] = 350
 
         if self.mode == "weights":
             for state in mpc_config["model"]["states"].values():
