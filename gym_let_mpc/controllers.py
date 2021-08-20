@@ -1007,8 +1007,8 @@ class AHETMPCMIX(ETMPC):  # ET MPC action is et decision and noise (or noise + l
 
             self.mpc.t0 = len(self.history["mpc_compute"]) * self.mpc.data.meta_data['t_step']
             mpc_optimal_action = self.mpc.make_step(state_vec)
-            self.mpc_state_preds = mpc_get_solution(self.mpc, states="all")
-            self._mpc_action_sequence = mpc_get_solution(self.mpc, inputs="all")
+            self.mpc_state_preds = mpc_get_solution(self.mpc, states="all")[:, :n_horizon + 1, :]
+            self._mpc_action_sequence = mpc_get_solution(self.mpc, inputs="all")[:, :n_horizon, :]
 
             u_cfs = mpc_optimal_action# + action[2:]
             self.steps_since_mpc_computation = 0
