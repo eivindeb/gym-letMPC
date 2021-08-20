@@ -12,7 +12,8 @@ import gym_let_mpc
 
 
 class LetMPCEnv(gym.Env):
-    def __init__(self, config_path, config_kw=None):
+    def __init__(self, config_path, d=1, config_kw=None):
+        self.d = d
         def set_config_attrs(parent, kws):
             for attr, val in kws.items():
                 if isinstance(parent, dict) and (attr not in parent or parent[attr] is None):
@@ -330,57 +331,76 @@ class LetMPCEnv(gym.Env):
             #action = np.atleast_1d(action)
         else:
             raise ValueError
-        self.control_system.step(action)#np.atleast_1d(int(a_dict["mpc_compute"])))
-        info  = {}
-        #if self.config["mpc"]["type"] in ["LQRETMPC", "ETMPC"] and self.control_system.controller.steps_since_mpc_computation >= 10:
-        #    self.control_system.controller.get_action(self.control_system.current_state, np.array([True]))
-        self.history["actions"].append(a_dict)
-        self.steps_count += 1
 
-       # info = {}
-        obs = self.get_observation()
         done = False
-        additional_rew = 0
-        if self.steps_count >= self.max_steps:
-            done = True
-            info["termination"] = "steps"
-        elif len(self.config["environment"].get("end_on_constraint_violation", [])) > 0:
-            if isinstance(self.control_system.controller, TTAHMPC):
-                for obj_i in range(self.control_system.controller.n_objects):
-                    if self.control_system.controller.get_obj_distance(self.control_system.current_state, obj_i) <= 0:
-                        done = True
-                        info["termination"] = "constraint"
-                        additional_rew = self.config["environment"]["reward"].get("termination_weight", -1) * (
-                                    self.max_steps - self.steps_count)
-                        info["reward/constraint"] = -additional_rew
-                        break
-            else:
-                for c_name, c_d in self.control_system.get_constraint_distances().items():
-                    if (c_name.startswith("clin-") or (c_name.startswith("cnlin-") and c_name.endswith("h"))) and\
-                            c_name.split("-")[1] in self.config["environment"]["end_on_constraint_violation"] and c_d > 0:
-                        done = True
-                        info["termination"] = "constraint"
-                        additional_rew = self.config["environment"]["reward"].get("termination_weight", -1) * (self.max_steps - self.steps_count)
-                        info["reward/constraint"] = -additional_rew
-                        break
-        if info.get("termination", None) != "constraint":
-            info["reward/constraint"] = 0
-        if self.config["mpc"]["type"] == "TTAHMPC" and \
-                np.linalg.norm(np.array([self.trajectory_goal_x, self.trajectory_goal_y]) - \
-                               np.array([self.control_system.current_state["x"], self.control_system.current_state["y"]])) <= 0.5:
-            done = True
-            info["termination"] = "goal"
-
-        rew = self.get_reward(done=done, info=info)
-        rew += additional_rew
+        d_rew = 0
+        info = {}
         for category, v in self.config["environment"].get("info", {}).items():
             if category == "reward":
                 for rew_name, rew_expr in v.items():
-                    info["reward/{}".format(rew_name)] = self.get_reward(rew_expr, done=done, info=info)
+                    info["reward/{}".format(rew_name)] = 0
             else:
                 raise NotImplementedError
+        for d in range(self.d):
+            if not done:
+                self.control_system.step(action)#np.atleast_1d(int(a_dict["mpc_compute"])))
+                #info  = {}
+                #if self.config["mpc"]["type"] in ["LQRETMPC", "ETMPC"] and self.control_system.controller.steps_since_mpc_computation >= 10:
+                #    self.control_system.controller.get_action(self.control_system.current_state, np.array([True]))
+                self.history["actions"].append(a_dict)
+                self.steps_count += 1
 
-        #info.update(a_dict)
+               # info = {}
+                #obs = self.get_observation()
+                additional_rew = 0
+                #rew = 0
+                if self.steps_count >= self.max_steps:
+                    done = True
+                    info["termination"] = "steps"
+                elif not self.control_system.controller.mpc.solver_stats["success"]:
+                    done = True
+                    info["termination"] = "mpc_fail"
+                    additional_rew = self.config["environment"]["reward"].get("termination_weight", -1) * (self.max_steps - self.steps_count)
+                    info["reward/constraint"] = -additional_rew
+                elif len(self.config["environment"].get("end_on_constraint_violation", [])) > 0:
+                    if self.config["mpc"]["type"] in ["TTAHMPC", "TTAHMPCRANGE"]:
+                        for obj_i in range(self.control_system.controller.n_objects):
+                            if self.control_system.controller.get_obj_distance(self.control_system.current_state, obj_i) <= 0:
+                                done = True
+                                info["termination"] = "constraint"
+                                additional_rew = self.config["environment"]["reward"].get("termination_weight", -1) * (
+                                            self.max_steps - self.steps_count)
+                                info["reward/constraint"] = -additional_rew
+                                break
+                    else:
+                        for c_name, c_d in self.control_system.get_constraint_distances().items():
+                            if (c_name.startswith("clin-") or (c_name.startswith("cnlin-") and c_name.endswith("h"))) and\
+                                    c_name.split("-")[1] in self.config["environment"]["end_on_constraint_violation"] and c_d > 0:
+                                done = True
+                                info["termination"] = "constraint"
+                                additional_rew = self.config["environment"]["reward"].get("termination_weight", -1) * (self.max_steps - self.steps_count)
+                                info["reward/constraint"] = -additional_rew
+                                break
+                if info.get("termination", None) != "constraint":
+                    info["reward/constraint"] = 0
+                if self.config["mpc"]["type"] in ["TTAHMPC", "TTAHMPCRANGE"] and \
+                        np.linalg.norm(np.array([self.trajectory_goal_x, self.trajectory_goal_y]) - \
+                                       np.array([self.control_system.current_state["x"], self.control_system.current_state["y"]])) <= 0.5:
+                    done = True
+                    info["termination"] = "goal"
+
+                rew = self.get_reward(done=done, info=info)
+                rew += additional_rew
+                self.history["rewards"].append(rew)
+                for category, v in self.config["environment"].get("info", {}).items():
+                    if category == "reward":
+                        for rew_name, rew_expr in v.items():
+                            info["reward/{}".format(rew_name)] += self.get_reward(rew_expr, done=done, info=info)
+                    else:
+                        raise NotImplementedError
+                d_rew += rew
+        obs = self.get_observation()
+            #info.update(a_dict)
 
         if self.control_system.controller.mpc_config["objective"].get("vf", None) is not None:
             mpc = self.control_system.controller.get_mpc()
@@ -442,9 +462,9 @@ class LetMPCEnv(gym.Env):
             info["Bs"] = self.control_system.controller.lqr.B
 
         self.history["obs"].append(obs)
-        self.history["rewards"].append(rew)
+        #self.history["rewards"].append(rew)
 
-        return obs, rew, done, info
+        return obs, d_rew, done, info
 
     def render(self, mode='human', save_path=None):  # TODO: add env renders
         figure, axes = None, None
