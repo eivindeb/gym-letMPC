@@ -52,10 +52,19 @@ class LetMPCEnv(gym.Env):
         assert "randomize" in self.config["environment"]
         assert "state" in self.config["environment"]["randomize"] and "reference" in self.config["environment"]["randomize"]
         assert "render" in self.config["environment"]
-        if config["mpc"]["type"] in ["ETMPC", "ETMPCMIX", "AHETMPCMIX"]:
+        if config["mpc"]["type"] == "ETMPC":
+            controller = getattr(gym_let_mpc.controllers, config["mpc"]["type"])(config["mpc"], config["lqr"],
+                                                                                 max_steps=self.max_steps)
+            self.action_space = gym.spaces.MultiBinary(1)
+            if isinstance(self.d, list) or self.d > 1:
+                controller.use_lqr = True
+        elif config["mpc"]["type"] in ["ETMPCMIX", "AHETMPCMIX"]:
             #assert len(config["environment"]["action"]["variables"]) == 1 and \
             #       config["environment"]["action"]["variables"][0]["name"] == "mpc_compute"
             controller = getattr(gym_let_mpc.controllers, config["mpc"]["type"])(config["mpc"], config["lqr"], max_steps=self.max_steps)
+
+            if isinstance(self.d, list) or self.d > 1:
+                controller.use_lqr = True
             #self.action_space = gym.spaces.MultiBinary(1)
             a_low, a_high = [0], [1]
             if config["mpc"]["type"] == "AHETMPCMIX":
@@ -390,6 +399,9 @@ class LetMPCEnv(gym.Env):
                     done = True
                     info["termination"] = "goal"
 
+                if self.config["mpc"]["type"] == "AHETMPCMIX":
+                    action[2:] = np.nan  # TODO: check if this ruins anything because this will be saved with nan
+
                 rew = self.get_reward(done=done, info=info)
                 rew += additional_rew
                 self.history["rewards"].append(rew)
@@ -454,7 +466,7 @@ class LetMPCEnv(gym.Env):
                 #    print("what")
                 info["action"] = info["mpc_action"]
         if self.config["mpc"]["type"] in ["ETMPCMIX", "AHETMPCMIX", "LQRETMPC", "LQRFHFNMPC"] and self.control_system.controller.lqr_config["type"] == "time-varying":
-            if self.control_system.controller.steps_since_mpc_computation == 0:
+            if self.control_system.controller.steps_since_mpc_computation == 0 or (self._cur_d > 1 and self.control_system.controller.steps_since_mpc_computation - self._cur_d <= 0):
                 As, Bs = self.get_linearized_mpc_model_over_prediction()
                 info["As"] = As
                 info["Bs"] = Bs

@@ -633,6 +633,7 @@ class ETMPC(LMPC):
             B = [B for i in range(self.mpc.n_horizon)]
 
         self.lqr = LQR(A, B, Q, R, JA, JB)
+        self.use_lqr = True
 
         self.steps_since_mpc_computation = None
 
@@ -676,7 +677,7 @@ class ETMPC(LMPC):
 
             u_cfs = mpc_optimal_action
             self.steps_since_mpc_computation = 0
-            if self.lqr_config.get("type", "time-invariant") == "time-varying" and self.lqr_config["model"]["class"] == "mpc_linearization":
+            if self.lqr_config.get("type", "time-invariant") == "time-varying" and self.lqr_config["model"]["class"] == "mpc_linearization" and self.use_lqr:
                 As, Bs = self.mpc.get_linearized_model_over_prediction()
                 #Q, R = self.mpc.get_objective_quadratic_approximation()
                 self.lqr.update_component(A=As, B=Bs)
@@ -691,7 +692,12 @@ class ETMPC(LMPC):
             self.history["u_lqr"].append(np.full_like(mpc_optimal_action, np.nan))
             self.history["execution_time"].append(sum([v for k, v in self.mpc.solver_stats.items() if k.startswith("t_proc")]))
         else:
-            mpc_state_pred = self.mpc_state_preds[:, self.steps_since_mpc_computation + 1]
+            if self.steps_since_mpc_computation + 2 < self.mpc_state_preds.shape[1]:
+                mpc_state_pred = self.mpc_state_preds[:, self.steps_since_mpc_computation + 1]
+                u_mpc = self._mpc_action_sequence[:, self.steps_since_mpc_computation + 1]
+            else:
+                mpc_state_pred = self.get_lqr_steady_state().reshape(-1, 1)
+                u_mpc = 0
             if self.lqr_config["model"]["class"] == "linearization" and self.steps_since_mpc_computation == 0:
                 operating_point = self._get_state_dict(state_vec)
                 operating_point.update(self._get_input_dict(self._mpc_action_sequence[0, 1, :]))
@@ -700,9 +706,8 @@ class ETMPC(LMPC):
             # TODO: get preds and stuff from model?
             epsilon = state_vec - mpc_state_pred
             exec_time = time.process_time()
-            u_lqr = np.array(self.lqr.get_action(epsilon))#, t=self.steps_since_mpc_computation + 1))
+            u_lqr = np.array(self.lqr.get_action(epsilon, t=self.steps_since_mpc_computation))
             exec_time = time.process_time() - exec_time
-            u_mpc = self._mpc_action_sequence[:, self.steps_since_mpc_computation + 1]
             u_cfs = u_mpc + u_lqr
 
             self.history["mpc_compute"].append(False)
@@ -943,6 +948,7 @@ class AHETMPCMIX(ETMPC):  # ET MPC action is et decision and noise (or noise + l
             mpc_config["model"]["ps"]["n_horizon"] = {}
 
         super().__init__(mpc_config, mpc_model=mpc_model, lqr_config=lqr_config, viewer=viewer)
+        self.use_lqr = False
 
         if self.mode == "list":
             mpc_model = self.mpc.model
@@ -1013,6 +1019,11 @@ class AHETMPCMIX(ETMPC):  # ET MPC action is et decision and noise (or noise + l
             u_cfs = mpc_optimal_action# + action[2:]
             self.steps_since_mpc_computation = 0
 
+            if self.lqr_config.get("type", "time-invariant") == "time-varying" and self.lqr_config["model"]["class"] == "mpc_linearization" and self.use_lqr:
+                As, Bs = self.mpc.get_linearized_model_over_prediction()
+                #Q, R = self.mpc.get_objective_quadratic_approximation()
+                self.lqr.update_component(A=As, B=Bs)
+
             self.history["mpc_compute"].append(True)
             epsilon_dict = self._get_state_dict(np.full_like(self.mpc_state_preds[:, 0, :], np.nan))
             if self.tvp_props is not None:
@@ -1039,7 +1050,14 @@ class AHETMPCMIX(ETMPC):  # ET MPC action is et decision and noise (or noise + l
             # TODO: get preds and stuff from model?
             epsilon = state_vec - mpc_state_pred
             exec_time = time.process_time()
-            u_lqr = action[2:]#np.array(self.lqr.get_action(epsilon))
+            if not np.any(np.isnan(action[2:])):
+                u_lqr = action[2:]#np.array(self.lqr.get_action(epsilon))
+            else:
+                assert self.use_lqr
+                if self.lqr_config.get("type", "time-invariant") == "time-varying":
+                    u_lqr = self.lqr.get_action(epsilon, t=self.steps_since_mpc_computation)
+                else:
+                    u_lqr = self.lqr.get_action(epsilon)
             #u_lqr = np.zeros_like(u_lqr)
             exec_time = time.process_time() - exec_time
             u_cfs = u_mpc + u_lqr
