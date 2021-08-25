@@ -14,6 +14,7 @@ import gym_let_mpc
 class LetMPCEnv(gym.Env):
     def __init__(self, config_path, d=1, config_kw=None):
         self.d = d
+        self._cur_d = None
         print("running with d={}".format(d))
         def set_config_attrs(parent, kws):
             for attr, val in kws.items():
@@ -205,6 +206,10 @@ class LetMPCEnv(gym.Env):
             return d
 
         self.steps_count = 0
+        if isinstance(self.d, list):
+            self._cur_d = np.random.choice(self.d)
+        else:
+            self._cur_d = self.d
 
         first = True
         #res = []
@@ -351,7 +356,7 @@ class LetMPCEnv(gym.Env):
                     info["reward/{}".format(rew_name)] = 0
             else:
                 raise NotImplementedError
-        for d in range(self.d):
+        for d in range(self._cur_d):
             if not done:
                 self.control_system.step(action)#np.atleast_1d(int(a_dict["mpc_compute"])))
                 #info  = {}
@@ -634,6 +639,8 @@ class LetMPCEnv(gym.Env):
             val = mpc_get_aux_value(self.control_system.controller.get_mpc(), var["name"])
         elif var["type"] == "obj_dist":
             val = self.control_system.controller.get_obj_distance(self.control_system.current_state, int(var["name"].split("_")[1]))
+        elif var["type"] == "d":
+            val = self._cur_d
         else:
             raise ValueError
 
