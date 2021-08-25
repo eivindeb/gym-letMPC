@@ -1406,7 +1406,8 @@ class AHMPC(LMPC):
         # self.mpc.calculate_aux_num()
 
         self.current_input = {u_name: None for u_name in self.input_names}
-        self.history = {"inputs": [self.current_input], "references": [self.current_reference],
+        self.current_reference = {r_name: 0 for r_name in self.reference_names}
+        self.history = {"inputs": [self.current_input], "references": [],
                         "errors": [self._get_tracking_error(state)],
                         "tvp": []}
 
