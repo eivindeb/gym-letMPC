@@ -413,7 +413,7 @@ class LetMPCEnv(gym.Env):
                 for category, v in self.config["environment"].get("info", {}).items():
                     if category == "reward":
                         for rew_name, rew_expr in v.items():
-                            info["reward/{}".format(rew_name)] += self.get_reward(rew_expr, done=done, info=info)
+                            info["reward/{}".format(rew_name)] += self.get_reward(rew_expr, done=done, info=info, normalize=False)
                     else:
                         raise NotImplementedError
                 d_rew += rew
@@ -552,7 +552,7 @@ class LetMPCEnv(gym.Env):
 
         return obs
 
-    def get_reward(self, rew_expr=None, done=False, info=None):
+    def get_reward(self, rew_expr=None, done=False, info=None, normalize=True):
         if rew_expr is None:
             rew_expr = self.config["environment"]["reward"]["expression"]
 
@@ -564,7 +564,12 @@ class LetMPCEnv(gym.Env):
                 var_val = var_val[0]
             rew_expr = str_replace_whole_words(rew_expr, var["name"], var_val)
 
-        return eval(rew_expr)
+        rew = eval(rew_expr)
+        normalize_info = self.config["environment"]["reward"].get("normalize", None)
+        if normalize and normalize_info is not None:
+            rew = (rew - normalize_info.get("mean", 0.0)) / (normalize_info.get("std", 1.0))
+
+        return rew
 
     def _get_variable_value(self, var):
         if var["type"] == "state":
