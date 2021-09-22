@@ -408,7 +408,11 @@ class LetMPCEnv(gym.Env):
                     action[2:] = np.nan  # TODO: check if this ruins anything because this will be saved with nan
 
                 rew = self.get_reward(done=done, info=info)
-                rew += additional_rew
+                rew_norm_info = self.config["environment"]["reward"].get("normalize", None)
+                if rew_norm_info is None:
+                    rew += additional_rew
+                else:
+                    rew += (additional_rew - rew_norm_info.get("mean", 0.0)) / rew_norm_info.get("std", 1.0)
                 self.history["rewards"].append(rew)
                 for category, v in self.config["environment"].get("info", {}).items():
                     if category == "reward":
