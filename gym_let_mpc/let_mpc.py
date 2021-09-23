@@ -396,7 +396,7 @@ class LetMPCEnv(gym.Env):
                                 additional_rew = self.config["environment"]["reward"].get("termination_weight", -1) * (self.max_steps - self.steps_count)
                                 info["reward/constraint"] = -additional_rew
                                 break
-                if info.get("termination", None) != "constraint":
+                if "reward/constraint" not in info:
                     info["reward/constraint"] = 0
                 if self.config["mpc"]["type"] in ["TTAHMPC", "TTAHMPCRANGE"] and \
                         np.linalg.norm(np.array([self.trajectory_goal_x, self.trajectory_goal_y]) - \
