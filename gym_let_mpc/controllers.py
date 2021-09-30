@@ -1261,6 +1261,18 @@ class LQRFHFNMPC(AHETMPCMIX):
         return super().get_action(state, action, tvp_values)
 
 
+class FHETMPC(AHETMPCMIX):
+    def __init__(self, mpc_config, lqr_config, mpc_model=None, viewer=None, max_steps=None):
+        self.H = mpc_config["H"]
+        mpc_config["mode"] = "weights"
+        super().__init__(mpc_config, lqr_config, mpc_model, viewer, max_steps)
+
+    def get_action(self, state, action, tvp_values=None):
+        action = action.item()
+        action = np.concatenate([[action], [self.H if self.current_step > 0 else self.mpc_config["params"]["n_horizon"]], [np.nan]])
+        return super().get_action(state, action, tvp_values)
+
+
 class LQRMPC(ETMPC):
     def get_action(self, state, action, tvp_values=None):
         if self.lqr_config.get("type", "time-invariant") == "time-varying":

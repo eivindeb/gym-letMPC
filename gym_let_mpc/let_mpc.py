@@ -53,12 +53,11 @@ class LetMPCEnv(gym.Env):
         assert "randomize" in self.config["environment"]
         assert "state" in self.config["environment"]["randomize"] and "reference" in self.config["environment"]["randomize"]
         assert "render" in self.config["environment"]
-        if config["mpc"]["type"] == "ETMPC":
+        if config["mpc"]["type"] in ["ETMPC", "FHETMPC"]:
             controller = getattr(gym_let_mpc.controllers, config["mpc"]["type"])(config["mpc"], config["lqr"],
                                                                                  max_steps=self.max_steps)
             self.action_space = gym.spaces.MultiBinary(1)
-            if isinstance(self.d, list) or self.d > 1:
-                controller.use_lqr = True
+            controller.use_lqr = True
         elif config["mpc"]["type"] in ["ETMPCMIX", "AHETMPCMIX"]:
             #assert len(config["environment"]["action"]["variables"]) == 1 and \
             #       config["environment"]["action"]["variables"][0]["name"] == "mpc_compute"
@@ -297,7 +296,7 @@ class LetMPCEnv(gym.Env):
 
             self.control_system.reset(state=sampled_state, reference=sampled_reference, constraint=sampled_constraint,
                                       model=sampled_model, process_noise=process_noise, tvp=tvp)
-            if self.config["mpc"]["type"] == "ETMPC":
+            if self.config["mpc"]["type"] in ["ETMPC", "FHETMPC"]:
                 actions = {"mpc_compute": True}
                 self.control_system.step(action=np.array([actions["mpc_compute"]]))
             elif self.config["mpc"]["type"] == "ETMPCMIX":
@@ -326,7 +325,7 @@ class LetMPCEnv(gym.Env):
         assert not np.any(np.isnan(action))
         if isinstance(action, np.ndarray) and len(action.shape) > 1:
             action = action[0, :]
-        if self.config["mpc"]["type"] == "ETMPC":
+        if self.config["mpc"]["type"] in ["ETMPC", "FHETMPC"]:
             a_dict = {"mpc_compute": action[0]}#round(action)}
             action = a_dict["mpc_compute"]
         elif self.config["mpc"]["type"] == "ETMPCMIX":
