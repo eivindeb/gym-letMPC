@@ -403,7 +403,7 @@ class LetMPCEnv(gym.Env):
                     done = True
                     info["termination"] = "goal"
 
-                if self.config["mpc"]["type"] == "AHETMPCMIX":
+                if self.config["mpc"]["type"] == "AHETMPCMIX" and d > 0:
                     action[2:] = np.nan  # TODO: check if this ruins anything because this will be saved with nan
 
                 rew = self.get_reward(done=done, info=info)
