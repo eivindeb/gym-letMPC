@@ -154,6 +154,9 @@ class LetMPCEnv(gym.Env):
                                     obs_high.append(lim ** 2)
                             else:
                                 raise NotImplementedError
+            if self.config["environment"]["observation"].get("h", 0) > 0:
+                obs_high = [obs_high for _ in range(self.config["environment"]["observation"].get("h", 0))]
+                obs_low = [obs_low for _ in range(self.config["environment"]["observation"].get("h", 0))]
             return obs_high, obs_low
         if isinstance(self.config["environment"]["observation"]["variables"], dict):
             obs_spaces = {}
@@ -315,8 +318,10 @@ class LetMPCEnv(gym.Env):
                 actions = {"lqr": [0 for i in range(len(self.control_system.controller.input_names))]}
                 self.control_system.step(action=np.array(actions["lqr"]))
             #self.history["actions"].append(actions)
+            self.history = {"obs": [], "actions": [], "rewards": []}
             obs = self.get_observation()
-            self.history = {"obs": [obs], "actions": [], "rewards": []}
+            self.history["obs"].append(obs)
+
             #res.append(self.control_system.controller.mpc.solver_stats["success"])
 
         return obs
@@ -553,7 +558,16 @@ class LetMPCEnv(gym.Env):
                     obs.append(_transform_val(var_val, transform))
             obs = np.array(obs)
 
-        return obs
+        if self.config["environment"]["observation"].get("h", 0) > 0:
+            if len(self.history["obs"]) == 0:
+                obs = [obs for _ in range(self.config["environment"]["observation"].get("h", 0))]
+            else:
+                prev_obs = list(self.history["obs"][-1])
+                prev_obs.insert(0, obs)
+                del prev_obs[-1]
+                obs = prev_obs
+
+        return np.array(obs)
 
     def get_reward(self, rew_expr=None, done=False, info=None, normalize=True):
         if rew_expr is None:
