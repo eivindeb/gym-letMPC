@@ -12,7 +12,10 @@ import gym_let_mpc
 
 
 class LetMPCEnv(gym.Env):
-    def __init__(self, config_path, d=1, config_kw=None):
+    def __init__(self, config_path, d=1, config_kw=None, render_path=None):
+        self.render_path = render_path
+        self._n_renders = 0
+
         self.d = d
         self._cur_d = None
         print("running with d={}".format(d))
@@ -489,6 +492,10 @@ class LetMPCEnv(gym.Env):
 
         self.history["obs"].append(obs)
         #self.history["rewards"].append(rew)
+
+        if done and self.render_path is not None:
+            self.render(save_path=self.render_path + "_{}.png".format(self._n_renders))
+            self._n_renders += 1
 
         return obs, d_rew, done, info
 
