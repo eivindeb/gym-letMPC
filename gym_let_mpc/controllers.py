@@ -8,6 +8,7 @@ from gym_let_mpc.utils import str_replace_whole_words, casadiNNVF, TensorFlowEva
 import casadi
 import copy
 import time
+import timeit
 
 
 def initialize_mpc(model, config, tvp_fun=None, p_fun=None, suppress_IPOPT_output=True, linear_solver="MA27", value_function=None):
@@ -705,9 +706,9 @@ class ETMPC(LMPC):
 
             # TODO: get preds and stuff from model?
             epsilon = state_vec - mpc_state_pred
-            exec_time = time.process_time()
+            exec_time = timeit.default_timer()
             u_lqr = np.array(self.lqr.get_action(epsilon, t=self.steps_since_mpc_computation))
-            exec_time = time.process_time() - exec_time
+            exec_time = timeit.default_timer() - exec_time
             u_cfs = u_mpc + u_lqr
 
             self.history["mpc_compute"].append(False)
@@ -856,9 +857,9 @@ class ETMPCMIX(ETMPC):  # ET MPC action is et decision and noise (or noise + lqr
 
             # TODO: get preds and stuff from model?
             epsilon = state_vec - mpc_state_pred
-            exec_time = time.process_time()
+            exec_time = timeit.default_timer()
             u_lqr = action[1:]#np.array(self.lqr.get_action(epsilon))
-            exec_time = time.process_time() - exec_time
+            exec_time = timeit.default_timer() - exec_time
             u_cfs = u_mpc + u_lqr
 
             self.history["mpc_compute"].append(False)
@@ -1049,7 +1050,7 @@ class AHETMPCMIX(ETMPC):  # ET MPC action is et decision and noise (or noise + l
 
             # TODO: get preds and stuff from model?
             epsilon = state_vec - mpc_state_pred
-            exec_time = time.process_time()
+            exec_time = timeit.default_timer()
             if not np.any(np.isnan(action[2:])):
                 u_lqr = action[2:]#np.array(self.lqr.get_action(epsilon))
             else:
@@ -1059,7 +1060,7 @@ class AHETMPCMIX(ETMPC):  # ET MPC action is et decision and noise (or noise + l
                 else:
                     u_lqr = self.lqr.get_action(epsilon)
             #u_lqr = np.zeros_like(u_lqr)
-            exec_time = time.process_time() - exec_time
+            exec_time = timeit.default_timer() - exec_time
             u_cfs = u_mpc + u_lqr
 
             self.history["mpc_compute"].append(False)
@@ -1203,9 +1204,9 @@ class LQRETMPC(ETMPC):  # Fixed schedule MPC recompute, action is LQR
 
             # TODO: get preds and stuff from model?
             epsilon = state_vec - mpc_state_pred
-            exec_time = time.process_time()
+            exec_time = timeit.default_timer()
             u_lqr = action#np.array(self.lqr.get_action(epsilon))
-            exec_time = time.process_time() - exec_time
+            exec_time = timeit.default_timer() - exec_time
             u_cfs = u_mpc + u_lqr
 
             self.history["mpc_compute"].append(False)

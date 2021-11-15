@@ -215,7 +215,7 @@ class LetMPCEnv(gym.Env):
 
         first = True
         #res = []
-        while first or not self.control_system.controller.mpc.solver_stats["success"]:
+        while first or not getattr(self.control_system.controller.mpc, "solver_stats", {"success":True})["success"]:
             if not first and any([arg is not None for arg in [state, reference, constraint, model, process_noise, tvp]]):
                 print("Warning: Supplied initial conditions produced an infeasible problem")
             first = False
@@ -376,7 +376,7 @@ class LetMPCEnv(gym.Env):
                 if self.steps_count >= self.max_steps:
                     done = True
                     info["termination"] = "steps"
-                elif not self.control_system.controller.mpc.solver_stats["success"]:
+                elif not getattr(self.control_system.controller.mpc, "solver_stats", {"success":True})["success"]:
                     done = True
                     info["termination"] = "mpc_fail"
                     additional_rew = self.config["environment"]["reward"].get("termination_weight", -1) * (self.max_steps - self.steps_count)
