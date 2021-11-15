@@ -1604,6 +1604,47 @@ class AHMPCOLD(LMPC):
         return self._p_template
 
 
+class MIMPC(LMPC):
+    def __init__(self, mpc_config, mpc_model=None, viewer=None):
+        discrete_variables = []
+        for u_name, u_props in mpc_config["model"]["inputs"].items():
+            if u_props.get("discrete", False):
+                discrete_variables.append(u_name)
+        assert len(discrete_variables) > 0
+        if "params" not in mpc_config:
+            mpc_config["params"] = {}
+        mpc_config["params"]["discrete_variables"] = discrete_variables
+        super(MIMPC, self).__init__(mpc_config, mpc_model=mpc_model, viewer=viewer)
+
+    def reset(self, state=None, reference=None, constraint=None, tvp=None):
+        super().reset(state=state, reference=reference, constraint=constraint, tvp=tvp)
+        self.history["integer_horizon"] = []
+
+    def get_action(self, state, integer_horizon, tvp_values=None):
+        state_vec = self._get_state_vector(state)
+        for ref_name in self.current_reference:
+            self.current_reference[ref_name] = tvp_values[ref_name][0]
+
+        if len(integer_horizon.shape) > 0:
+            integer_horizon = integer_horizon.item()
+        self.mpc.integer_horizon = integer_horizon
+        self.history["integer_horizon"].append(integer_horizon)
+
+        self._tvp_data = tvp_values
+
+        mpc_optimal_action = self.mpc.make_step(state_vec)
+        self.mpc_state_preds = mpc_get_solution(self.mpc, states="all")
+        self._mpc_action_sequence = mpc_get_solution(self.mpc, inputs="all")
+
+        for input_i, input_name in enumerate(self.input_names):
+            self.current_input[input_name] = mpc_optimal_action[input_i]
+
+        self.history["inputs"].append(copy.deepcopy(self.current_input))
+        self.history["references"].append(copy.deepcopy(self.current_reference))
+        self.history["errors"].append(self._get_tracking_error(state))
+        self.history["tvp"].append(self._tvp_data)
+
+        return mpc_optimal_action
 
 
 class TTAHMPC(AHMPC):

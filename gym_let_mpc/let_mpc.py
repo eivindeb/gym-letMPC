@@ -3,7 +3,7 @@ from gym.utils import seeding
 import numpy as np
 import json
 from gym_let_mpc.simulator import ControlSystem
-from gym_let_mpc.controllers import ETMPC, AHMPC, TTAHMPC, mpc_get_aux_value, mpc_get_algstate_value
+from gym_let_mpc.controllers import ETMPC, AHMPC, MIMPC, mpc_get_aux_value, mpc_get_algstate_value
 import collections.abc
 import matplotlib.pyplot as plt
 from gym_let_mpc.utils import str_replace_whole_words, casadiNNVF
@@ -87,9 +87,9 @@ class LetMPCEnv(gym.Env):
             self.action_space = gym.spaces.Box(low=np.array(a_low, dtype=np.float32),
                                                high=np.array(a_high, dtype=np.float32),
                                                dtype=np.float32)
-        elif config["mpc"]["type"] in ["AHMPC", "TTAHMPC", "TTAHMPCRANGE"]:
+        elif config["mpc"]["type"] in ["AHMPC", "TTAHMPC", "TTAHMPCRANGE", "MIMPC"]:
             assert len(config["environment"]["action"]["variables"]) == 1 and \
-                   config["environment"]["action"]["variables"][0]["name"] == "mpc_horizon"
+                   config["environment"]["action"]["variables"][0]["name"] in ["mpc_horizon", "integer_horizon"]
             if config["mpc"]["type"] == "AHMPC":
                 controller = AHMPC(config["mpc"])
             elif config["mpc"]["type"] in ["TTAHMPC", "TTAHMPCRANGE"]:
@@ -98,6 +98,8 @@ class LetMPCEnv(gym.Env):
                     config["environment"]["end_on_constraint_violation"] = []
                 for obj_i in range(controller.n_objects):
                     config["environment"]["end_on_constraint_violation"].append("obj_{}_distance".format(obj_i))
+            elif config["mpc"]["type"] == "MIMPC":
+                controller = MIMPC(config["mpc"])
             else:
                 raise ValueError
             self.action_space = gym.spaces.Box(low=np.array([1]), high=np.array([config["mpc"]["params"]["n_horizon"]]), dtype=np.float32)
@@ -320,6 +322,7 @@ class LetMPCEnv(gym.Env):
             elif self.config["mpc"]["type"] == "LQRMPC":
                 actions = {"lqr": [0 for i in range(len(self.control_system.controller.input_names))]}
                 self.control_system.step(action=np.array(actions["lqr"]))
+            # TODO: consider if MIMPC should step in reset
             #self.history["actions"].append(actions)
             self.history = {"obs": [], "actions": [], "rewards": []}
             obs = self.get_observation()
@@ -346,6 +349,12 @@ class LetMPCEnv(gym.Env):
             a_dict = {a_props["name"]: np.round(action).astype(np.int32)
                       for a_i, a_props in enumerate(self.config["environment"]["action"]["variables"])}
             action = a_dict["mpc_horizon"]
+        elif self.config["mpc"]["type"] in ["MIMPC"]:
+            #action = np.clip(action, -1, 1)
+            #action = np.array(50 - 1) * (action - (-1)) / (1 - (-1)) + 1
+            a_dict = {a_props["name"]: np.round(action).astype(np.int32)
+                      for a_i, a_props in enumerate(self.config["environment"]["action"]["variables"])}
+            action = a_dict["integer_horizon"]
         elif self.config["mpc"]["type"] in ["LQRMPC", "LQRFHFNMPC"]:  # TODO: remove this test stuff
             a_dict = {"lqr": action[0]}
         elif self.config["mpc"]["type"] == "LQRETMPC":
@@ -799,7 +808,7 @@ class LetMPCEnv(gym.Env):
 
 if __name__ == "__main__":  # TODO: constraints on pendulum and end episode if constraints violated  # TODO: state when MPC was last computed in obs
     horizon = 25
-    config_path = "../../etmpc/configs/cart_pendulum.json"
+    config_path = "../../etmpc/configs/mi_di.json"
     env = LetMPCEnv(config_path, d=1, config_kw={"environment": {"reward": {"normalize": {"std": 1.0, "mean": 0.0}}}})
     env.seed(5)
 
@@ -817,10 +826,14 @@ if __name__ == "__main__":  # TODO: constraints on pendulum and end episode if c
         test_set_path = "../../etmpc/datasets/cp_param_25.pkl"
     elif "double_integrator" in config_path:
         test_set_path = "../../etmpc/datasets/di_tv_1.pkl"#"../../lmpc-horizon/datasets/cart_pendulum_10.pkl"
+    else:
+        test_set_path = None
 
-    import pickle
-    with open(test_set_path, "rb") as f:
-        test_set = pickle.load(f)
+    if test_set_path is not None:
+
+        import pickle
+        with open(test_set_path, "rb") as f:
+            test_set = pickle.load(f)
 
     #from stable_baselines.sac import SAC
 
@@ -835,8 +848,10 @@ if __name__ == "__main__":  # TODO: constraints on pendulum and end episode if c
         rews = {"rl": []}
         import time
         #test_set[3]["state"]["theta"] = 4.5
-        obs = env.reset(**test_set[24])
-        #obs = env.reset()
+        if test_set_path is not None:
+            obs = env.reset(**test_set[24])
+        else:
+            obs = env.reset()
         if config_path.endswith("cart_pendulum.json") or "lqr" in config_path:
             As, Bs = env.get_linearized_mpc_model_over_prediction()
             env.control_system.controller.lqr.update_component(A=As, B=Bs)
@@ -871,6 +886,7 @@ if __name__ == "__main__":  # TODO: constraints on pendulum and end episode if c
                 mpc_compute = 0
             #horizon = np.random.randint(20, 40)
             horizon = 50
+            mi_horizon = 2#np.random.randint(3, 5)
             if "cart_pendulum" in config_path:
                 if config_path.endswith("cart_pendulum_ah.json"):
                     obs, rew, done, info = env.step(np.array([horizon]))
@@ -888,6 +904,8 @@ if __name__ == "__main__":  # TODO: constraints on pendulum and end episode if c
             elif "double_integrator" in config_path:
                 u_lqr = env.control_system.controller.lqr.get_action(obs[-2:].reshape(-1, 1), t=obs[-3].astype(np.int32))[0, 0]
                 obs, rew, done, info = env.step(np.array([u_lqr]))
+            elif "mi" in config_path:
+                obs, rew, done, info = env.step(np.array([mi_horizon]))
             #obs, rew, done, info = env.step(np.array([mpc_compute, u_lqr]))#env.control_system.controller.lqr.get_action(obs.reshape(-1, 1)))#[np.random.randint(1, 10)])
             #
             #obs, rew, done, info = env.step(horizon)
@@ -907,7 +925,7 @@ if __name__ == "__main__":  # TODO: constraints on pendulum and end episode if c
             #energies["k"].append(mpc_get_aux_value(env.control_system.controller.mpc, "energy_kinetic"))
             #energies["p"].append(-mpc_get_aux_value(env.control_system.controller.mpc, "energy_potential")* 10)
             #energies["pos"].append(10 * (env.control_system.current_state["pos"] - env.control_system.controller._tvp_data["pos_r"][0]) ** 2)
-        print("elapsed_time {}".format((time.process_time() - t_b) / 125))
+        print("elapsed_time {}".format((time.process_time() - t_b)))
 
         #plt.plot(energies["k"], label="E_k")
         #plt.plot(energies["p"], label="E_p")
