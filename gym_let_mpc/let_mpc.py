@@ -595,7 +595,7 @@ class LetMPCEnv(gym.Env):
             var_val = self._get_variable_value(var)
             if isinstance(var_val, list) or isinstance(var_val, np.ndarray):  # TODO: needs to be better way to do this
                 var_val = var_val[0]
-            rew_expr = str_replace_whole_words(rew_expr, var["name"], var_val)
+            rew_expr = str_replace_whole_words(rew_expr, var.get("expr_name", var["name"]), var_val)
 
         rew = eval(rew_expr)
         normalize_info = self.config["environment"]["reward"].get("normalize", None)
@@ -616,8 +616,11 @@ class LetMPCEnv(gym.Env):
             if var.get("value_type", "absolute") == "absolute":
                 val = self.control_system.controller.current_input[var["name"]]
             elif var.get("value_type") == "delta":
-                val = self.control_system.controller.history["inputs"][-2][var["name"]] - \
-                      self.control_system.controller.current_input[var["name"]]
+                if self.steps_count < 2:
+                    val = self.control_system.controller.current_input[var["name"]]
+                else:
+                    val = self.control_system.controller.history["inputs"][-2][var["name"]] - \
+                          self.control_system.controller.current_input[var["name"]]
             else:
                 raise ValueError
         elif var["type"] == "algstate":
