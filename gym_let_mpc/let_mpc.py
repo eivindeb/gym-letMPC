@@ -797,8 +797,10 @@ class LetMPCEnv(gym.Env):
             return self.control_system.controller.mpc.get_linearized_model_over_prediction()
 
 
-if __name__ == "__main__":  # TODO: constraints on pendulum and end episode if constraints violated
-    env = LetMPCEnv("configs/cart_pendulum_horizon.json")#"../../lmpc-horizon/configs/unicycle_ca_horizon.json")
+if __name__ == "__main__":  # TODO: constraints on pendulum and end episode if constraints violated  # TODO: state when MPC was last computed in obs
+    horizon = 25
+    config_path = "../../etmpc/configs/cart_pendulum.json"
+    env = LetMPCEnv(config_path, d=1, config_kw={"environment": {"reward": {"normalize": {"std": 1.0, "mean": 0.0}}}})
     env.seed(5)
 
     """
@@ -810,42 +812,116 @@ if __name__ == "__main__":  # TODO: constraints on pendulum and end episode if c
     val_fun = TensorFlowEvaluator([mlp.input_ph], [mlp.output], sess)
     env.set_value_function(mlp.input_ph, mlp.output, sess)
     """
-    test_set_path = "../../lmpc-horizon/datasets/cart_pendulum_10.pkl"#"../../lmpc-horizon/datasets/unicycle_ca_5.pkl"
+    if "cart_pendulum" in config_path or "cp" in config_path:
+        #test_set_path = "../../etmpc/datasets/cp_det_swingup_1.pkl"
+        test_set_path = "../../etmpc/datasets/cp_param_25.pkl"
+    elif "double_integrator" in config_path:
+        test_set_path = "../../etmpc/datasets/di_tv_1.pkl"#"../../lmpc-horizon/datasets/cart_pendulum_10.pkl"
 
     import pickle
     with open(test_set_path, "rb") as f:
         test_set = pickle.load(f)
 
-    rews = {}
+    #from stable_baselines.sac import SAC
 
+    #model = SAC.load("../../lmpc-horizon/models/unicycle_ca_horizon/SAC/vf_g975_rs5_novftrain_s5/test_model_10000.zip", policy_kwargs={"mpc_value_fn_path": None})
+    #env.set_value_function_weights_and_biases(*model.policy_tf.get_mpc_vfn_weights_and_biases())
+    #env.set_value_function_enabled_status(True)
+    #env.load_value_function("../../lmpc-horizon/models/unicycle_ca_horizon/SAC/dg_h10", name="VF16-16nstep32_best")
+
+    #test_set[10]['reference']["ns"] = [[1, 1, 1] for i in range(4)]
+    scores = []
     for i in range(1):
+        rews = {"rl": []}
         import time
-        obs = env.reset(**test_set[5])
-        #obs = env.reset(state={"pos": 0, "omega": -1, "theta": -0.53, "v": 0})
+        #test_set[3]["state"]["theta"] = 4.5
+        obs = env.reset(**test_set[24])
         #obs = env.reset()
+        if config_path.endswith("cart_pendulum.json") or "lqr" in config_path:
+            As, Bs = env.get_linearized_mpc_model_over_prediction()
+            env.control_system.controller.lqr.update_component(A=As, B=Bs)
+        #As, Bs = env.get_linearized_mpc_model_over_prediction()
+        #env.control_system.controller.lqr.update_component(**{"A": As, "B": Bs})
+        #obs = env.reset(state={"pos": 0, "omega": -1, "theta": -0.53, "v": 0})
+        #obs = env.reset(reference={"theta_r": np.radians(45)})
+        #obs = env.reset(state={"theta1": np.pi, "theta2": np.pi, "dtheta1": test_set[0]["state"]["dtheta1"], "dtheta2": test_set[0]["state"]["dtheta2"], "pos": 0}, tvp=test_set[0]["tvp"])
+        #obs = env.reset(state={"SoC": 0.8})
+        t_b = time.process_time()
+
+        energies = {"k": [], "p": [], "pos": []}
+
+
+        #import casadi
+        #mpc = env.control_system.controller.mpc
+        #xu = casadi.vertcat(mpc.model.x.cat, mpc.model.u.cat)
+        #h = casadi.hessian(mpc.mterm + 0.1 * mpc.model.u.cat ** 2, xu)[0]
+        #h_fun = casadi.Function("test", [xu], [h])
+        #qr = h_fun(np.zeros((0,))).toarray()
+        #print(qr)
+        #As, Bs = env.get_linearized_mpc_model_over_prediction()
+        #env.control_system.controller.lqr.update_component(Q=qr[:4, :4], R=np.atleast_1d(qr[-1, -1]), A=As, B=Bs)
 
         done = False
         t_before = time.process_time()
-        horizon = 15
         while not done:
             t_step = time.process_time()
-            if env.steps_count % 1 == 0 and False:
-                horizon = 25 if horizon == 50 else 50
-            obs, rew, done, info = env.step([horizon])#[np.random.randint(1, 10)])
+            if env.steps_count > 0 and (env.steps_count + 1) % 5 == 0:
+                mpc_compute = 1
+            else:
+                mpc_compute = 0
+            #horizon = np.random.randint(20, 40)
+            horizon = 50
+            if "cart_pendulum" in config_path:
+                if config_path.endswith("cart_pendulum_ah.json"):
+                    obs, rew, done, info = env.step(np.array([horizon]))
+                elif config_path.endswith("cart_pendulum_etonly.json"):
+                    obs, rew, done, info = env.step(np.array([mpc_compute]))
+                else:
+                    u_lqr = env.control_system.controller.lqr.get_action(obs[0, -4:].reshape(-1, 1), t=env.control_system.controller.steps_since_mpc_computation)[0, 0]
+                    #obs, rew, done, info = env2.step(np.array([mpc_compute]))
+                    #u_lqr = np.zeros_like(u_lqr)
+                    #u_lqr += np.random.normal(0, 0.5, size=u_lqr.shape)
+                    if config_path.endswith("cart_pendulum.json"):
+                        obs, rew, done, info = env.step(np.array([mpc_compute, horizon, u_lqr]))
+                    else:
+                        obs, rew, done, info = env.step(np.array([u_lqr]))
+            elif "double_integrator" in config_path:
+                u_lqr = env.control_system.controller.lqr.get_action(obs[-2:].reshape(-1, 1), t=obs[-3].astype(np.int32))[0, 0]
+                obs, rew, done, info = env.step(np.array([u_lqr]))
+            #obs, rew, done, info = env.step(np.array([mpc_compute, u_lqr]))#env.control_system.controller.lqr.get_action(obs.reshape(-1, 1)))#[np.random.randint(1, 10)])
+            #
+            #obs, rew, done, info = env.step(horizon)
+
+            if "As" in info:
+                env.control_system.controller.lqr.update_component(**{"A": info["As"], "B": info["Bs"]})
+            rews["rl"].append(rew)
             for rew_comp, v in info.items():
                 if rew_comp.startswith("reward/"):
                     if rew_comp not in rews:
                         rews[rew_comp] = []
                     rews[rew_comp].append(v)
-            if time.process_time() - t_step > 1:
-                print(env.control_system.controller.mpc.solver_stats)
-            print(env.steps_count)
+            #if time.process_time() - t_step > 1:
+            #    print(env.control_system.controller.mpc.solver_stats)
+            #its.append(env.control_system.controller.mpc.solver_stats["iter_count"])
+            print("#: {}, iterations: {}".format(env.steps_count, env.control_system.controller.mpc.solver_stats["iter_count"]))
+            #energies["k"].append(mpc_get_aux_value(env.control_system.controller.mpc, "energy_kinetic"))
+            #energies["p"].append(-mpc_get_aux_value(env.control_system.controller.mpc, "energy_potential")* 10)
+            #energies["pos"].append(10 * (env.control_system.current_state["pos"] - env.control_system.controller._tvp_data["pos_r"][0]) ** 2)
+        print("elapsed_time {}".format((time.process_time() - t_b) / 125))
 
+        #plt.plot(energies["k"], label="E_k")
+        #plt.plot(energies["p"], label="E_p")
+        #plt.plot(energies["pos"], label="pos")
+        #plt.legend()
+        #plt.show()
         for k, v in rews.items():
             print("{}: {}".format(k, sum(v)))
-        print("Elapsed time {}".format(time.process_time() - t_before))
-        print("Termination: {}".format(info["termination"]))
+        scores.append(np.sum([sum(v) for v in rews.values()]))
         env.render()
+    print("Termination: {}".format(info.get("termination", "steps")))
+    print("scores " + str(["{:.2f}".format(v) for v in scores]))
+    print("mean {:.2f}".format(np.mean(scores)))
+    print("std {:.2f}".format(np.std(scores)))
 
 
         
