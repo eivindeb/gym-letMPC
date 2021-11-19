@@ -1,0 +1,195 @@
+{
+  "environment": {
+    "max_steps": 50,
+    "observation": {
+      "variables": [
+        {
+          "name": "x1",
+          "type": "state"
+        },
+        {
+          "name": "x2",
+          "type": "state"
+        }
+      ]
+    },
+    "action": {
+      "variables": [
+        {
+          "name": "integer_horizon"
+        }
+      ]
+    },
+    "reward": {
+      "variables": [
+        {
+          "type": "state",
+          "name": "x1"
+        },
+        {
+          "type": "input",
+          "name": "u1"
+        },
+        {
+          "type": "state",
+          "name": "x2"
+        },
+        {
+          "type": "action",
+          "name": "integer_horizon"
+        },
+        {
+          "type": "input",
+          "value_type": "delta",
+          "name": "u1",
+          "expr_name": "u1_delta"
+        }
+      ],
+      "expression": "-((x1) ** 2 + 0.1 * (u1) ** 2 + (u1_delta) ** 2)"
+    },
+    "randomize": {
+      "reference": {
+      },
+      "state": {
+        "x1": {
+          "type": "uniform",
+          "kw": {
+            "low": -1,
+            "high": 1
+          }
+        },
+        "x2": {
+          "type": "uniform",
+          "kw": {
+            "low": -0.25,
+            "high": 0.25
+          }
+        }
+      },
+      "model": {}
+    },
+    "render": {
+      "plot_action": true,
+      "plot_reward": true
+    },
+    "info": {
+      "reward": {
+        "state": "(x1) ** 2 + (x2) ** 2",
+        "input": "integer_horizon"
+      }
+    }
+  },
+  "plant": {
+    "render": {
+      "process_noise": true
+    },
+    "params": {
+      "t_step": 1
+    },
+    "model": {
+      "type": "discrete",
+      "class": "nonlinear",
+      "states": {
+        "x1": {
+          "rhs": "x1 + 0.1 * x2"
+        },
+        "x2": {
+          "rhs": "x2 + u1*u2 - 0.5"
+        }
+      },
+      "inputs": {
+        "u1": {
+          "unit": "rad/s",
+          "discrete": true
+        },
+        "u2": {
+          "unit": "rad/s"
+        }
+      }
+    }
+  },
+  "mpc": {
+    "type": "MIMPC",
+    "params": {
+      "n_horizon": 10,
+      "integer_horizon": 10,
+      "t_step": 1,
+      "n_robust": 0,
+      "store_full_solution": true
+    },
+    "model": {
+      "type": "discrete",
+      "class": "nonlinear",
+      "states": {
+        "x1": {
+          "rhs": "0.1 * x2"
+        },
+        "x2": {
+          "rhs": "u1*u2 - 0.5"
+        }
+      },
+      "inputs": {
+        "u1": {
+          "unit": "rad/s",
+          "discrete": true
+        },
+        "u2": {
+          "unit": "rad/s"
+        }
+      }
+    },
+    "constraints": [
+      {
+        "name": "u1",
+        "type": "_u",
+        "constraint_type": "lower",
+        "value": 0
+      },
+      {
+        "name": "u1",
+        "type": "_u",
+        "constraint_type": "upper",
+        "value": 1
+      },
+      {
+        "name": "u2",
+        "type": "_u",
+        "constraint_type": "lower",
+        "value": 0.5
+      },
+      {
+        "name": "u2",
+        "type": "_u",
+        "constraint_type": "upper",
+        "value": 1
+      }
+    ],
+    "objective": {
+      "lterm": {
+        "variables": [
+          {
+            "name": "x1",
+            "type": "_x"
+          },
+          {
+            "name": "u1",
+            "type": "_u"
+          }
+        ],
+        "expression": "(x1) ** 2 + 0.1 * (u1) ** 2"
+      },
+      "mterm": {
+        "variables": [
+          {
+            "name": "x1",
+            "type": "_x"
+          }
+        ],
+        "expression": "(x1) ** 2"
+      },
+      "R_delta": {
+        "u1": 1
+      }
+    }
+  }
+}
