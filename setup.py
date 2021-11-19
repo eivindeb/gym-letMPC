@@ -16,6 +16,7 @@ setup(
         "do-mpc>=4.1.0",
         "gym>=0.17.3",
         "matplotlib>=3.3.3",
-        "numpy>=1.19.3"
+        "numpy>=1.19.3",
+        "scipy>=1.7.2"
     ]
 )

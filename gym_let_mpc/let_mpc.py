@@ -811,7 +811,7 @@ class LetMPCEnv(gym.Env):
 
 if __name__ == "__main__":  # TODO: constraints on pendulum and end episode if constraints violated  # TODO: state when MPC was last computed in obs
     horizon = 25
-    config_path = "../../etmpc/configs/mi_di.json"
+    config_path = "configs/mi_di.json"
     env = LetMPCEnv(config_path, d=1, config_kw={"environment": {"reward": {"normalize": {"std": 1.0, "mean": 0.0}}}})
     env.seed(5)
 
