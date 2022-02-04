@@ -356,7 +356,7 @@ class LMPC:  # TODO: initalize input to some value other than None
         self.current_input = {u_name: None for u_name in self.input_names}
         self.history = {"inputs": [copy.deepcopy(self.current_input)], "references": [],
                         "errors": [self._get_tracking_error(state)],
-                        "tvp": []}
+                        "tvp": [], "execution_time": []}
 
     def get_action(self, state, *args, tvp_values=None, **kwargs):
         raise NotImplementedError
@@ -1645,6 +1645,7 @@ class MIMPC(LMPC):
         self.history["references"].append(copy.deepcopy(self.current_reference))
         self.history["errors"].append(self._get_tracking_error(state))
         self.history["tvp"].append(self._tvp_data)
+        self.history["execution_time"].append(sum([v for k, v in self.mpc.solver_stats.items() if k.startswith("t_proc")]))
 
         return mpc_optimal_action
 
