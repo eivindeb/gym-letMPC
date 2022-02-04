@@ -12,13 +12,16 @@ import gym_let_mpc
 
 
 class LetMPCEnv(gym.Env):
-    def __init__(self, config_path, d=1, config_kw=None, render_path=None):
+    def __init__(self, config_path, d=1, config_kw=None, render_path=None, render_on_reset=False):
         self.render_path = render_path
         self._n_renders = 0
+        self.render_on_reset = render_on_reset
+        self._render_current_episode = False
+        self._render_kw = None
 
         self.d = d
         self._cur_d = None
-        print("running with d={}".format(d))
+        #print("running with d={}".format(d))
         def set_config_attrs(parent, kws):
             for attr, val in kws.items():
                 if isinstance(parent, dict) and (attr not in parent or parent[attr] is None):
@@ -87,7 +90,7 @@ class LetMPCEnv(gym.Env):
             self.action_space = gym.spaces.Box(low=np.array(a_low, dtype=np.float32),
                                                high=np.array(a_high, dtype=np.float32),
                                                dtype=np.float32)
-        elif config["mpc"]["type"] in ["AHMPC", "TTAHMPC", "TTAHMPCRANGE", "MIMPC"]:
+        elif config["mpc"]["type"] in ["AHMPC", "TTAHMPC", "TTAHMPCRANGE"]:
             assert len(config["environment"]["action"]["variables"]) == 1 and \
                    config["environment"]["action"]["variables"][0]["name"] in ["mpc_horizon", "integer_horizon"]
             if config["mpc"]["type"] == "AHMPC":
@@ -103,6 +106,9 @@ class LetMPCEnv(gym.Env):
             else:
                 raise ValueError
             self.action_space = gym.spaces.Box(low=np.array([1]), high=np.array([config["mpc"]["params"]["n_horizon"]]), dtype=np.float32)
+        elif config["mpc"]["type"] in ["MIMPC"]:
+            controller = MIMPC(config["mpc"])
+            self.action_space = gym.spaces.Discrete(config["mpc"]["params"]["n_horizon"])
         elif "LQR" in config["mpc"]["type"]:  # TODO: remove this test stuff
             controller = getattr(gym_let_mpc.controllers, config["mpc"]["type"])(config["mpc"], config["lqr"])
             a_low, a_high = [], []
@@ -211,6 +217,11 @@ class LetMPCEnv(gym.Env):
                 else:
                     d[k] = v
             return d
+
+        if self.render_on_reset and self._render_current_episode:
+            self.render(**self._render_kw)
+            self._render_current_episode = False
+            self._render_kw = None
 
         self.steps_count = 0
         if isinstance(self.d, list):
@@ -352,7 +363,7 @@ class LetMPCEnv(gym.Env):
         elif self.config["mpc"]["type"] in ["MIMPC"]:
             #action = np.clip(action, -1, 1)
             #action = np.array(50 - 1) * (action - (-1)) / (1 - (-1)) + 1
-            a_dict = {a_props["name"]: np.round(action).astype(np.int32)
+            a_dict = {a_props["name"]: action + 1
                       for a_i, a_props in enumerate(self.config["environment"]["action"]["variables"])}
             action = a_dict["integer_horizon"]
         elif self.config["mpc"]["type"] in ["LQRMPC", "LQRFHFNMPC"]:  # TODO: remove this test stuff
@@ -509,6 +520,10 @@ class LetMPCEnv(gym.Env):
         return obs, d_rew, done, info
 
     def render(self, mode='human', save_path=None):  # TODO: add env renders
+        if self.render_on_reset and not self._render_current_episode:
+            self._render_current_episode = True
+            self._render_kw = {"mode": mode, "save_path": save_path}
+            return
         figure, axes = None, None
         if self.viewer is None:
             env_plots = [plot_name for plot_name, make_plot in self.config["environment"]["render"].items() if make_plot]
