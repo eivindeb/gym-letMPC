@@ -51,12 +51,17 @@ def initialize_mpc(model, config, tvp_fun=None, p_fun=None, suppress_IPOPT_outpu
 
 
 def mpc_set_objective(mpc, cost_parameters, reference=None, parameters=None, value_function=None):
+    if "R_delta" in cost_parameters:
+        mpc.set_rterm(**cost_parameters["R_delta"])
+
     costs = {"lterm": None, "mterm": None}
     for cost_term in costs.keys():
         if cost_term in cost_parameters:
             expr = cost_parameters[cost_term]["expression"]
             if expr == "0":
                 costs[cost_term] = casadi.DM(0)
+            elif expr == "Riccati":
+                costs[cost_term] = expr
             else:
                 for var in sorted(cost_parameters[cost_term]["variables"], key=lambda x: len(x["name"]), reverse=True):
                     if var["type"] in ["_x", "_u", "_tvp", "_p", "_aux"]:
@@ -78,9 +83,6 @@ def mpc_set_objective(mpc, cost_parameters, reference=None, parameters=None, val
         vf = None
 
     mpc.set_objective(mterm=costs["mterm"], lterm=costs["lterm"], vf=vf, discount_factor=cost_parameters.get("discount_factor", 1))
-
-    if "R_delta" in cost_parameters:
-        mpc.set_rterm(**cost_parameters["R_delta"])
 
     return mpc
 
