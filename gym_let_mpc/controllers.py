@@ -1615,6 +1615,16 @@ class MIMPC(LMPC):
         assert len(discrete_variables) > 0
         if "params" not in mpc_config:
             mpc_config["params"] = {}
+
+        mpc_config["model"]["tvps"]["leftover_uptime"] = {
+            "true": [{
+                "type": "constant",
+                "kw": {
+                    "value": 0
+                }
+            }]
+        }
+
         mpc_config["params"]["discrete_variables"] = discrete_variables
         super(MIMPC, self).__init__(mpc_config, mpc_model=mpc_model, viewer=viewer)
 
@@ -1648,6 +1658,16 @@ class MIMPC(LMPC):
         self.history["execution_time"].append(sum([v for k, v in self.mpc.solver_stats.items() if k.startswith("t_proc")]))
 
         return mpc_optimal_action
+
+    def _get_tvp_values(self, t):
+        uptime_length = 0
+        while self.history["inputs"][-(uptime_length + 1)]["u1"]:
+            uptime_length += 1
+        leftover_uptime = int(min(self.mpc.n_horizon, max((self.mpc_config["params"]["min_uptime"] - uptime_length) * self.current_input["u1"].item(), 0)))
+        leftover_uptime_array = np.zeros((self.mpc.n_horizon + 1))
+        leftover_uptime_array[:leftover_uptime] = 1
+        self._tvp_data["leftover_uptime"] = leftover_uptime_array
+        return super()._get_tvp_values(t)
 
 
 class TTAHMPC(AHMPC):
