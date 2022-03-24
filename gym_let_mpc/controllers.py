@@ -1616,14 +1616,18 @@ class MIMPC(LMPC):
         if "params" not in mpc_config:
             mpc_config["params"] = {}
 
-        mpc_config["model"]["tvps"]["leftover_uptime"] = {
-            "true": [{
-                "type": "constant",
-                "kw": {
-                    "value": 0
-                }
-            }]
-        }
+        if "min_uptime" in mpc_config["params"]:
+            if "tvps" not in mpc_config["model"]:
+                mpc_config["model"]["tvps"] = {}
+
+            mpc_config["model"]["tvps"]["leftover_uptime"] = {
+                "true": [{
+                    "type": "constant",
+                    "kw": {
+                        "value": 0
+                    }
+                }]
+            }
 
         mpc_config["params"]["discrete_variables"] = discrete_variables
         super(MIMPC, self).__init__(mpc_config, mpc_model=mpc_model, viewer=viewer)
