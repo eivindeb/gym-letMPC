@@ -353,7 +353,7 @@ class LMPC:  # TODO: initalize input to some value other than None
         self.current_step = 0
         self.current_reference = {r_name: 0 for r_name in
                                   self.reference_names}
-        self.current_input = {u_name: np.array(0) for u_name in self.input_names}
+        self.current_input = {u_name: np.array([0]) for u_name in self.input_names}
         self.history = {"inputs": [copy.deepcopy(self.current_input)], "references": [],
                         "errors": [self._get_tracking_error(state)],
                         "tvp": [], "execution_time": []}
